@@ -4,16 +4,12 @@ import IOKit.hid
 final class HIDDeviceMonitor {
     typealias Callback = () -> Void
     typealias PTTButtonCallback = (_ isPressed: Bool, _ usage: UInt32) -> Void
+    typealias ThumbWheelCallback = (_ delta: Int) -> Void
 
     private let manager: IOHIDManager
     private let callbackQueue = DispatchQueue(label: "logiremap.hid-monitor")
-    private let acceptedNames = [
-        "MX Master 3 Mac",
+    private let acceptedNamePrefixes = [
         "MX Master 3",
-        "MX Master 3 for Mac",
-    ]
-    private let excludedNameFragments = [
-        "3S",
     ]
     private let thumbWheelUsages: Set<UsageKey> = [
         UsageKey(page: UInt32(kHIDPage_Consumer), usage: UInt32(kHIDUsage_Csmr_ACPan)),
@@ -31,6 +27,7 @@ final class HIDDeviceMonitor {
 
     var onStateChange: Callback?
     var onPTTButtonEvent: PTTButtonCallback?
+    var onThumbWheelEvent: ThumbWheelCallback?
 
     init() {
         manager = IOHIDManagerCreate(kCFAllocatorDefault, IOOptionBits(kIOHIDOptionsTypeNone))
@@ -48,6 +45,10 @@ final class HIDDeviceMonitor {
         }
     }
 
+    var hasInputMonitoring: Bool {
+        IOHIDCheckAccess(kIOHIDRequestTypeListenEvent) == kIOHIDAccessTypeGranted
+    }
+
     func start() {
         let matching: [[String: Any]] = [[
             kIOHIDVendorIDKey as String: 0x046D,
@@ -59,8 +60,12 @@ final class HIDDeviceMonitor {
         IOHIDManagerRegisterDeviceMatchingCallback(manager, Self.handleDeviceMatched, context)
         IOHIDManagerRegisterDeviceRemovalCallback(manager, Self.handleDeviceRemoved, context)
         IOHIDManagerRegisterInputValueCallback(manager, Self.handleInputValue, context)
-        IOHIDManagerScheduleWithRunLoop(manager, CFRunLoopGetMain(), CFRunLoopMode.defaultMode.rawValue)
+        IOHIDManagerScheduleWithRunLoop(manager, CFRunLoopGetMain(), CFRunLoopMode.commonModes!.rawValue)
         IOHIDManagerOpen(manager, IOOptionBits(kIOHIDOptionsTypeNone))
+
+        if !hasInputMonitoring {
+            IOHIDRequestAccess(kIOHIDRequestTypeListenEvent)
+        }
 
         if let currentDevices = IOHIDManagerCopyDevices(manager) as? Set<IOHIDDevice> {
             for device in currentDevices {
@@ -110,6 +115,11 @@ final class HIDDeviceMonitor {
         }
 
         if wasInserted {
+            let context = UnsafeMutableRawPointer(Unmanaged.passUnretained(self).toOpaque())
+            IOHIDDeviceScheduleWithRunLoop(device, CFRunLoopGetMain(), CFRunLoopMode.commonModes!.rawValue)
+            IOHIDDeviceRegisterInputValueCallback(device, Self.handleInputValue, context)
+            IOHIDDeviceOpen(device, IOOptionBits(kIOHIDOptionsTypeNone))
+
             DispatchQueue.main.async { [weak self] in
                 self?.onStateChange?()
             }
@@ -130,18 +140,13 @@ final class HIDDeviceMonitor {
     }
 
     private func matchesAcceptedProduct(_ productName: String) -> Bool {
-        guard acceptedNames.contains(productName) else {
-            return false
-        }
-        return !excludedNameFragments.contains(where: productName.localizedCaseInsensitiveContains)
+        acceptedNamePrefixes.contains(where: { productName.hasPrefix($0) })
     }
 
-    private func recordInput(value: IOHIDValue, sender: UnsafeMutableRawPointer?) {
-        guard let sender else {
-            return
-        }
-
-        let deviceKey = OpaquePointer(sender)
+    private func recordInput(value: IOHIDValue) {
+        let element = IOHIDValueGetElement(value)
+        let device = IOHIDElementGetDevice(element)
+        let deviceKey = OpaquePointer(Unmanaged.passUnretained(device).toOpaque())
         let isTracked = lock.withLock {
             trackedDevices[deviceKey] != nil
         }
@@ -149,7 +154,6 @@ final class HIDDeviceMonitor {
             return
         }
 
-        let element = IOHIDValueGetElement(value)
         let usage = UsageKey(
             page: IOHIDElementGetUsagePage(element),
             usage: IOHIDElementGetUsage(element)
@@ -157,12 +161,14 @@ final class HIDDeviceMonitor {
         let integerValue = IOHIDValueGetIntegerValue(value)
         let now = DispatchTime.now().uptimeNanoseconds
 
+        var thumbWheelDelta: Int?
         var shouldDispatchPTT = false
         var pttUsage: UInt32?
 
         lock.withLock {
             if thumbWheelUsages.contains(usage), integerValue != 0 {
                 lastThumbWheelEventAt = now
+                thumbWheelDelta = integerValue
             } else if usage.page == UInt32(kHIDPage_Button), pttCandidateButtonUsages.contains(usage.usage) {
                 lastObservedPTTUsage = usage.usage
                 if integerValue == 0 {
@@ -172,6 +178,12 @@ final class HIDDeviceMonitor {
                 }
                 shouldDispatchPTT = true
                 pttUsage = usage.usage
+            }
+        }
+
+        if let thumbWheelDelta {
+            DispatchQueue.main.async { [weak self] in
+                self?.onThumbWheelEvent?(thumbWheelDelta)
             }
         }
 
@@ -220,13 +232,13 @@ final class HIDDeviceMonitor {
         monitor.remove(device)
     }
 
-    private static let handleInputValue: IOHIDValueCallback = { context, _, sender, value in
+    private static let handleInputValue: IOHIDValueCallback = { context, _, _, value in
         guard let context else {
             return
         }
 
         let monitor = Unmanaged<HIDDeviceMonitor>.fromOpaque(context).takeUnretainedValue()
-        monitor.recordInput(value: value, sender: sender)
+        monitor.recordInput(value: value)
     }
 }
 

@@ -28,8 +28,25 @@ open dist/BetterOptions.app
 ## Requirements
 
 - macOS 13+
-- Accessibility permission for `Better Options`
+- **Accessibility** permission for `Better Options` (the app prompts for this automatically on launch)
+- **Input Monitoring** permission (required for reading HID events from the mouse)
 - Wispr Flow installed if you want the push-to-talk remap
+
+## Troubleshooting permissions
+
+Rebuilding the app changes its ad-hoc code signature, which invalidates previously granted macOS permissions. If the app stops receiving mouse events after a rebuild:
+
+```bash
+# Reset stale TCC entries
+tccutil reset Accessibility com.dgcode88.betteroptions
+tccutil reset ListenEvent com.dgcode88.betteroptions
+
+# Relaunch and re-grant both permissions when prompted
+pkill -x BetterOptions
+open dist/BetterOptions.app
+```
+
+Then go to **System Settings → Privacy & Security** and re-enable both **Accessibility** and **Input Monitoring** for Better Options.
 
 ## Notes
 

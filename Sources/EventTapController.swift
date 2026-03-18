@@ -7,7 +7,6 @@ final class EventTapController {
 
     private let deviceMonitor: HIDDeviceMonitor
     private let wisprIntegration: WisprIntegration
-    private let mediaKeySender: MediaKeySender
 
     private var eventTap: CFMachPort?
     private var runLoopSource: CFRunLoopSource?
@@ -15,10 +14,9 @@ final class EventTapController {
     var onStateChange: Callback?
     var isEnabled = true
 
-    init(deviceMonitor: HIDDeviceMonitor, wisprIntegration: WisprIntegration, mediaKeySender: MediaKeySender) {
+    init(deviceMonitor: HIDDeviceMonitor, wisprIntegration: WisprIntegration) {
         self.deviceMonitor = deviceMonitor
         self.wisprIntegration = wisprIntegration
-        self.mediaKeySender = mediaKeySender
     }
 
     var hasAccessibilityPermission: Bool {
@@ -31,7 +29,7 @@ final class EventTapController {
 
     @discardableResult
     func requestAccessibilityPermission() -> Bool {
-        let options = [kAXTrustedCheckOptionPrompt.takeRetainedValue() as String: true] as CFDictionary
+        let options = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary
         return AXIsProcessTrustedWithOptions(options)
     }
 
@@ -100,21 +98,35 @@ final class EventTapController {
             return Unmanaged.passRetained(event)
         }
 
-        let horizontalDelta = event.getIntegerValueField(.scrollWheelEventDeltaAxis2)
+        let horizontalDelta = horizontalScrollDelta(for: event)
         guard horizontalDelta != 0 else {
             return Unmanaged.passRetained(event)
         }
 
-        guard deviceMonitor.sawRecentThumbWheelEvent(within: 0.08) else {
+        guard deviceMonitor.sawRecentThumbWheelEvent(within: 0.2) else {
             return Unmanaged.passRetained(event)
         }
 
-        if horizontalDelta > 0 {
-            mediaKeySender.sendVolumeDown()
-        } else {
-            mediaKeySender.sendVolumeUp()
-        }
         return nil
+    }
+
+    private func horizontalScrollDelta(for event: CGEvent) -> Int64 {
+        let delta = event.getIntegerValueField(.scrollWheelEventDeltaAxis2)
+        if delta != 0 {
+            return delta
+        }
+
+        let pointDelta = event.getIntegerValueField(.scrollWheelEventPointDeltaAxis2)
+        if pointDelta != 0 {
+            return pointDelta
+        }
+
+        let fixedPointDelta = event.getIntegerValueField(.scrollWheelEventFixedPtDeltaAxis2)
+        if fixedPointDelta != 0 {
+            return fixedPointDelta
+        }
+
+        return 0
     }
 
     private func handlePotentialPTTMouseEvent(_ event: CGEvent, pressed: Bool) -> Unmanaged<CGEvent>? {

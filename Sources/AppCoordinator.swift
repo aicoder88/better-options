@@ -3,13 +3,16 @@ import ApplicationServices
 
 @MainActor
 final class AppCoordinator: NSObject {
+    private enum DefaultsKey {
+        static let hasShownAccessibilityPrompt = "hasShownAccessibilityPrompt"
+    }
+
     private let deviceMonitor = HIDDeviceMonitor()
     private let wisprIntegration = WisprIntegration()
     private let mediaKeySender = MediaKeySender()
     private lazy var eventTapController = EventTapController(
         deviceMonitor: deviceMonitor,
-        wisprIntegration: wisprIntegration,
-        mediaKeySender: mediaKeySender
+        wisprIntegration: wisprIntegration
     )
 
     private var statusItem: NSStatusItem?
@@ -19,6 +22,7 @@ final class AppCoordinator: NSObject {
     private var permissionsItem: NSMenuItem?
     private var wisprItem: NSMenuItem?
     private var triggerItem: NSMenuItem?
+    private var accessibilityPollingTimer: Timer?
 
     private var remappingEnabled = true {
         didSet {
@@ -33,6 +37,7 @@ final class AppCoordinator: NSObject {
 
         wisprIntegration.refreshConfiguration()
         deviceMonitor.start()
+        requestAccessibilityPermissionsIfNeeded()
         eventTapController.start()
 
         updateMenu()
@@ -41,6 +46,18 @@ final class AppCoordinator: NSObject {
     private func wireCallbacks() {
         deviceMonitor.onStateChange = { [weak self] in
             self?.updateMenu()
+        }
+
+        deviceMonitor.onThumbWheelEvent = { [weak self] delta in
+            guard let self, self.remappingEnabled else {
+                return
+            }
+
+            if delta > 0 {
+                self.mediaKeySender.sendVolumeDown()
+            } else {
+                self.mediaKeySender.sendVolumeUp()
+            }
         }
 
         deviceMonitor.onPTTButtonEvent = { [weak self] pressed, _ in
@@ -119,10 +136,14 @@ final class AppCoordinator: NSObject {
         remapToggleItem?.title = remappingEnabled ? "Disable Remapping" : "Enable Remapping"
         remapToggleItem?.isEnabled = accessibilityGranted && tapReady
 
-        if accessibilityGranted {
-            permissionsItem?.title = tapReady ? "Accessibility: granted" : "Accessibility: granted, tap unavailable"
+        let inputMonitoring = deviceMonitor.hasInputMonitoring
+        if accessibilityGranted && inputMonitoring {
+            permissionsItem?.title = tapReady ? "Permissions: granted" : "Permissions: granted, tap unavailable"
         } else {
-            permissionsItem?.title = "Grant Accessibility Access"
+            var missing: [String] = []
+            if !accessibilityGranted { missing.append("Accessibility") }
+            if !inputMonitoring { missing.append("Input Monitoring") }
+            permissionsItem?.title = "Grant: " + missing.joined(separator: ", ")
         }
 
         wisprItem?.title = wisprMenuTitle()
@@ -171,8 +192,60 @@ final class AppCoordinator: NSObject {
 
     @objc
     private func requestAccessibilityPermissions() {
+        evaluateAccessibilityPermissions(promptIfNeeded: true)
+    }
+
+    private func requestAccessibilityPermissionsIfNeeded() {
+        evaluateAccessibilityPermissions(promptIfNeeded: shouldPromptForAccessibilityOnLaunch())
+    }
+
+    private func beginAccessibilityPolling() {
+        guard accessibilityPollingTimer == nil else {
+            return
+        }
+
+        accessibilityPollingTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] timer in
+            Task { @MainActor in
+                guard let self else {
+                    timer.invalidate()
+                    return
+                }
+
+                guard self.eventTapController.hasAccessibilityPermission else {
+                    self.updateMenu()
+                    return
+                }
+
+                timer.invalidate()
+                self.accessibilityPollingTimer = nil
+                self.eventTapController.start()
+                self.updateMenu()
+            }
+        }
+    }
+
+    private func evaluateAccessibilityPermissions(promptIfNeeded: Bool) {
+        if eventTapController.hasAccessibilityPermission {
+            accessibilityPollingTimer?.invalidate()
+            accessibilityPollingTimer = nil
+            eventTapController.start()
+            updateMenu()
+            return
+        }
+
+        guard promptIfNeeded else {
+            updateMenu()
+            return
+        }
+
+        UserDefaults.standard.set(true, forKey: DefaultsKey.hasShownAccessibilityPrompt)
         _ = eventTapController.requestAccessibilityPermission()
+        beginAccessibilityPolling()
         updateMenu()
+    }
+
+    private func shouldPromptForAccessibilityOnLaunch() -> Bool {
+        !UserDefaults.standard.bool(forKey: DefaultsKey.hasShownAccessibilityPrompt)
     }
 
     @objc
