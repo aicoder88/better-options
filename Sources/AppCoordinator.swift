@@ -10,6 +10,7 @@ final class AppCoordinator: NSObject {
     private let deviceMonitor = HIDDeviceMonitor()
     private let wisprIntegration = WisprIntegration()
     private let mediaKeySender = MediaKeySender()
+    private let volumeHUDController = VolumeHUDController()
     private lazy var eventTapController = EventTapController(
         deviceMonitor: deviceMonitor,
         wisprIntegration: wisprIntegration
@@ -21,7 +22,8 @@ final class AppCoordinator: NSObject {
     private var remapToggleItem: NSMenuItem?
     private var permissionsItem: NSMenuItem?
     private var wisprItem: NSMenuItem?
-    private var triggerItem: NSMenuItem?
+    private var volumePreviewItem: NSMenuItem?
+    private var accessibilitySettingsItem: NSMenuItem?
     private var accessibilityPollingTimer: Timer?
 
     private var remappingEnabled = true {
@@ -53,10 +55,15 @@ final class AppCoordinator: NSObject {
                 return
             }
 
+            let volume: Float?
             if delta > 0 {
-                self.mediaKeySender.sendVolumeDown()
+                volume = self.mediaKeySender.sendVolumeDown()
             } else {
-                self.mediaKeySender.sendVolumeUp()
+                volume = self.mediaKeySender.sendVolumeUp()
+            }
+
+            if let volume {
+                self.volumeHUDController.show(volume: volume)
             }
         }
 
@@ -108,16 +115,17 @@ final class AppCoordinator: NSObject {
         menu.addItem(wisprItem)
         self.wisprItem = wisprItem
 
-        let triggerItem = NSMenuItem(title: "", action: nil, keyEquivalent: "")
-        triggerItem.isEnabled = false
-        menu.addItem(triggerItem)
-        self.triggerItem = triggerItem
+        let volumePreviewItem = NSMenuItem(title: "Show Volume HUD", action: #selector(showVolumeHUDPreview), keyEquivalent: "")
+        volumePreviewItem.target = self
+        menu.addItem(volumePreviewItem)
+        self.volumePreviewItem = volumePreviewItem
 
         menu.addItem(.separator())
 
-        let helpItem = NSMenuItem(title: "Open Accessibility Settings", action: #selector(openAccessibilitySettings), keyEquivalent: "")
-        helpItem.target = self
-        menu.addItem(helpItem)
+        let accessibilitySettingsItem = NSMenuItem(title: "Open Accessibility Settings", action: #selector(openAccessibilitySettings), keyEquivalent: "")
+        accessibilitySettingsItem.target = self
+        menu.addItem(accessibilitySettingsItem)
+        self.accessibilitySettingsItem = accessibilitySettingsItem
 
         let quitItem = NSMenuItem(title: "Quit Better Options", action: #selector(quitApp), keyEquivalent: "q")
         quitItem.target = self
@@ -128,6 +136,7 @@ final class AppCoordinator: NSObject {
 
     private func updateMenu() {
         let accessibilityGranted = eventTapController.hasAccessibilityPermission
+        let inputMonitoring = deviceMonitor.hasInputMonitoring
         let tapReady = eventTapController.isTapInstalled
         let deviceName = deviceMonitor.activeDeviceName ?? "No MX Master 3 detected"
         let statusPrefix = deviceMonitor.hasMatchedDevice ? "Device: " : "Waiting: "
@@ -136,10 +145,12 @@ final class AppCoordinator: NSObject {
         remapToggleItem?.title = remappingEnabled ? "Disable Remapping" : "Enable Remapping"
         remapToggleItem?.isEnabled = accessibilityGranted && tapReady
 
-        let inputMonitoring = deviceMonitor.hasInputMonitoring
-        if accessibilityGranted && inputMonitoring {
-            permissionsItem?.title = tapReady ? "Permissions: granted" : "Permissions: granted, tap unavailable"
+        if accessibilityGranted {
+            permissionsItem?.isHidden = true
+            accessibilitySettingsItem?.isHidden = true
         } else {
+            permissionsItem?.isHidden = false
+            accessibilitySettingsItem?.isHidden = false
             var missing: [String] = []
             if !accessibilityGranted { missing.append("Accessibility") }
             if !inputMonitoring { missing.append("Input Monitoring") }
@@ -147,7 +158,6 @@ final class AppCoordinator: NSObject {
         }
 
         wisprItem?.title = wisprMenuTitle()
-        triggerItem?.title = triggerMenuTitle()
         statusItem?.button?.title = summaryTitle(
             hasDevice: deviceMonitor.hasMatchedDevice,
             hasPermission: accessibilityGranted,
@@ -166,13 +176,6 @@ final class AppCoordinator: NSObject {
         case .invalidConfig:
             return "Wispr: config unreadable"
         }
-    }
-
-    private func triggerMenuTitle() -> String {
-        if let usage = deviceMonitor.lastObservedPTTButtonUsage {
-            return "PTT trigger: MX button \(usage)"
-        }
-        return "PTT trigger: waiting for thumb-rest button"
     }
 
     private func summaryTitle(hasDevice: Bool, hasPermission: Bool, wisprReady: Bool) -> String {
@@ -252,6 +255,11 @@ final class AppCoordinator: NSObject {
     private func refreshWisprStatus() {
         wisprIntegration.refreshConfiguration()
         updateMenu()
+    }
+
+    @objc
+    private func showVolumeHUDPreview() {
+        volumeHUDController.show(volume: mediaKeySender.currentVolume() ?? 0.5)
     }
 
     @objc

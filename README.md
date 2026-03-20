@@ -25,6 +25,17 @@ To build a normal macOS app bundle that is easier to grant in Accessibility:
 open dist/BetterOptions.app
 ```
 
+## Install
+
+```bash
+./scripts/build_app_bundle.sh
+./scripts/install.sh
+```
+
+This installs `BetterOptions.app` to `/Applications` and registers a launch agent so it starts at login.
+
+> **Note:** Installing a new build changes the ad-hoc code signature. After reinstalling, go to **System Settings → Privacy & Security** and re-enable **Accessibility** and **Input Monitoring** for Better Options — macOS revokes these permissions when the binary changes.
+
 ## Requirements
 
 - macOS 13+

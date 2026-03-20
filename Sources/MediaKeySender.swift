@@ -9,26 +9,36 @@ final class MediaKeySender {
         static let soundDown = 1
     }
 
-    func sendVolumeUp() {
-        if !adjustSystemVolume(by: volumeStep) {
-            sendMediaKey(KeyCode.soundUp)
+    func sendVolumeUp() -> Float? {
+        if let volume = adjustSystemVolume(by: volumeStep) {
+            return volume
         }
+
+        sendMediaKey(KeyCode.soundUp)
+        return currentSystemVolume()
     }
 
-    func sendVolumeDown() {
-        if !adjustSystemVolume(by: -volumeStep) {
-            sendMediaKey(KeyCode.soundDown)
+    func sendVolumeDown() -> Float? {
+        if let volume = adjustSystemVolume(by: -volumeStep) {
+            return volume
         }
+
+        sendMediaKey(KeyCode.soundDown)
+        return currentSystemVolume()
     }
 
-    private func adjustSystemVolume(by delta: Float32) -> Bool {
+    func currentVolume() -> Float? {
+        currentSystemVolume()
+    }
+
+    private func adjustSystemVolume(by delta: Float32) -> Float? {
         guard let outputDeviceID = defaultOutputDeviceID() else {
-            return false
+            return nil
         }
 
         let channels = volumeChannels(for: outputDeviceID)
         guard !channels.isEmpty else {
-            return false
+            return nil
         }
 
         // Read current volume from the first channel
@@ -43,7 +53,7 @@ final class MediaKeySender {
             outputDeviceID, &address, 0, nil, &dataSize, &volume
         )
         guard getStatus == noErr else {
-            return false
+            return nil
         }
 
         var nextVolume = min(max(volume + delta, 0), 1)
@@ -59,14 +69,14 @@ final class MediaKeySender {
         }
 
         guard allOK else {
-            return false
+            return nil
         }
 
         if nextVolume > 0 {
             clearMuteIfNeeded(for: outputDeviceID)
         }
 
-        return true
+        return nextVolume
     }
 
     private func volumeChannels(for deviceID: AudioObjectID) -> [UInt32] {
@@ -137,6 +147,39 @@ final class MediaKeySender {
             dataSize,
             &unmuted
         )
+    }
+
+    private func currentSystemVolume() -> Float? {
+        guard let outputDeviceID = defaultOutputDeviceID() else {
+            return nil
+        }
+
+        let channels = volumeChannels(for: outputDeviceID)
+        guard let channel = channels.first else {
+            return nil
+        }
+
+        var address = AudioObjectPropertyAddress(
+            mSelector: kAudioDevicePropertyVolumeScalar,
+            mScope: kAudioDevicePropertyScopeOutput,
+            mElement: channel
+        )
+        var volume = Float32(0)
+        var dataSize = UInt32(MemoryLayout<Float32>.size)
+        let status = AudioObjectGetPropertyData(
+            outputDeviceID,
+            &address,
+            0,
+            nil,
+            &dataSize,
+            &volume
+        )
+
+        guard status == noErr else {
+            return nil
+        }
+
+        return volume
     }
 
     private func sendMediaKey(_ keyCode: Int) {
