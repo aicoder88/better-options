@@ -12,6 +12,7 @@ if [ ! -d "$APP_SRC" ]; then
 fi
 
 echo "Installing BetterOptions.app to /Applications..."
+sudo rm -rf "$APP_DST"
 sudo cp -R "$APP_SRC" "$APP_DST"
 
 echo "Creating launch agent for all users..."

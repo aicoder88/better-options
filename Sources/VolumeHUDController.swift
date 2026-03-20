@@ -7,12 +7,13 @@ final class VolumeHUDController {
     private let valueLabel = NSTextField(labelWithString: "0%")
     private let titleLabel = NSTextField(labelWithString: "Volume")
     private var hideWorkItem: DispatchWorkItem?
+    private var visibilityRevision = 0
     private let contentView = NSView(frame: .zero)
 
     init() {
         panel = NSPanel(
             contentRect: NSRect(x: 0, y: 0, width: 320, height: 132),
-            styleMask: [.borderless],
+            styleMask: [.borderless, .nonactivatingPanel],
             backing: .buffered,
             defer: false
         )
@@ -79,32 +80,44 @@ final class VolumeHUDController {
 
         positionPanel()
         hideWorkItem?.cancel()
-        NSApp.activate(ignoringOtherApps: false)
+        visibilityRevision += 1
+        let revision = visibilityRevision
 
-        panel.alphaValue = 0
-        panel.orderFrontRegardless()
-        panel.makeKey()
+        if panel.isVisible {
+            NSAnimationContext.runAnimationGroup { context in
+                context.duration = 0.1
+                panel.animator().alphaValue = 1
+            }
+        } else {
+            panel.alphaValue = 0
+            panel.orderFrontRegardless()
 
-        NSAnimationContext.runAnimationGroup { context in
-            context.duration = 0.12
-            panel.animator().alphaValue = 1
+            NSAnimationContext.runAnimationGroup { context in
+                context.duration = 0.14
+                panel.animator().alphaValue = 1
+            }
         }
 
         let hideWorkItem = DispatchWorkItem { [weak self] in
-            self?.hide()
+            self?.hide(revision: revision)
         }
         self.hideWorkItem = hideWorkItem
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0, execute: hideWorkItem)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.9, execute: hideWorkItem)
     }
 
-    private func hide() {
+    private func hide(revision: Int) {
         NSAnimationContext.runAnimationGroup(
             { context in
-                context.duration = 0.18
+                context.duration = 0.2
                 panel.animator().alphaValue = 0
             },
             completionHandler: { [weak self] in
-                self?.panel.orderOut(nil)
+                Task { @MainActor [weak self] in
+                    guard let self, self.visibilityRevision == revision else {
+                        return
+                    }
+                    self.panel.orderOut(nil)
+                }
             }
         )
     }
