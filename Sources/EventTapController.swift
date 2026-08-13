@@ -6,7 +6,7 @@ final class EventTapController {
     typealias Callback = () -> Void
 
     private let deviceMonitor: HIDDeviceMonitor
-    private let wisprIntegration: WisprIntegration
+    private let gvoiceIntegration: GVoiceIntegration
 
     private var eventTap: CFMachPort?
     private var runLoopSource: CFRunLoopSource?
@@ -14,9 +14,9 @@ final class EventTapController {
     var onStateChange: Callback?
     var isEnabled = true
 
-    init(deviceMonitor: HIDDeviceMonitor, wisprIntegration: WisprIntegration) {
+    init(deviceMonitor: HIDDeviceMonitor, gvoiceIntegration: GVoiceIntegration) {
         self.deviceMonitor = deviceMonitor
-        self.wisprIntegration = wisprIntegration
+        self.gvoiceIntegration = gvoiceIntegration
     }
 
     var hasAccessibilityPermission: Bool {
@@ -134,8 +134,7 @@ final class EventTapController {
             return Unmanaged.passRetained(event)
         }
 
-        guard wisprIntegration.runningPID != nil,
-              wisprIntegration.pttBindingState == .configured else {
+        guard gvoiceIntegration.runningPID != nil else {
             return Unmanaged.passRetained(event)
         }
 

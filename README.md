@@ -3,7 +3,7 @@
 Better Options is a small macOS menu bar app for remapping an `MX Master 3` / `MX Master 3 Mac`:
 
 - Thumb wheel left/right -> system volume down/up
-- Back side button -> Wispr Flow push-to-talk
+- Back side button -> GVoice hold-to-talk dictation
 
 ## Run
 
@@ -41,7 +41,7 @@ This installs `BetterOptions.app` to `/Applications` and registers a launch agen
 - macOS 13+
 - **Accessibility** permission for `Better Options` (the app prompts for this automatically on launch)
 - **Input Monitoring** permission (required for reading HID events from the mouse)
-- Wispr Flow installed if you want the push-to-talk remap
+- GVoice installed if you want the hold-to-talk remap
 
 ## Troubleshooting permissions
 
@@ -62,5 +62,5 @@ Then go to **System Settings → Privacy & Security** and re-enable both **Acces
 ## Notes
 
 - Remapping only activates when a matching MX Master 3 device is connected.
-- The app checks `~/Library/Application Support/Wispr Flow/config.json` and expects shortcut `4099` to be bound to `ptt`.
-- If Wispr Flow is not running, the Back button falls through to normal behavior.
+- Holding the Back button sends GVoice a held left Ctrl + left Cmd, one of the hold-to-talk triggers it already listens for. Better Options swallows the raw Back button so holding it doesn't also fire browser-back while you dictate — that is why it sends the chord instead of letting the raw button through.
+- If GVoice is not running, the Back button falls through to normal behavior.

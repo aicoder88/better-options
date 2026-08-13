@@ -8,12 +8,12 @@ final class AppCoordinator: NSObject {
     }
 
     private let deviceMonitor = HIDDeviceMonitor()
-    private let wisprIntegration = WisprIntegration()
+    private let gvoiceIntegration = GVoiceIntegration()
     private let mediaKeySender = MediaKeySender()
     private let volumeHUDController = VolumeHUDController()
     private lazy var eventTapController = EventTapController(
         deviceMonitor: deviceMonitor,
-        wisprIntegration: wisprIntegration
+        gvoiceIntegration: gvoiceIntegration
     )
 
     private var statusItem: NSStatusItem?
@@ -21,7 +21,7 @@ final class AppCoordinator: NSObject {
     private var deviceStatusItem: NSMenuItem?
     private var remapToggleItem: NSMenuItem?
     private var permissionsItem: NSMenuItem?
-    private var wisprItem: NSMenuItem?
+    private var gvoiceItem: NSMenuItem?
     private var volumePreviewItem: NSMenuItem?
     private var accessibilitySettingsItem: NSMenuItem?
     private var accessibilityPollingTimer: Timer?
@@ -29,6 +29,9 @@ final class AppCoordinator: NSObject {
     private var remappingEnabled = true {
         didSet {
             eventTapController.isEnabled = remappingEnabled
+            if !remappingEnabled {
+                gvoiceIntegration.releaseHeldChord()
+            }
             updateMenu()
         }
     }
@@ -37,7 +40,7 @@ final class AppCoordinator: NSObject {
         buildMenu()
         wireCallbacks()
 
-        wisprIntegration.refreshConfiguration()
+        gvoiceIntegration.refreshConfiguration()
         deviceMonitor.start()
         requestAccessibilityPermissionsIfNeeded()
         eventTapController.start()
@@ -68,21 +71,24 @@ final class AppCoordinator: NSObject {
         }
 
         deviceMonitor.onPTTButtonEvent = { [weak self] pressed, _ in
-            guard let self,
-                  self.remappingEnabled,
-                  self.wisprIntegration.runningPID != nil,
-                  self.wisprIntegration.pttBindingState == .configured else {
+            guard let self, self.remappingEnabled else {
                 return
             }
 
-            self.wisprIntegration.dispatchPTTEvent(pressed: pressed, location: .zero)
+            // A release always goes through, even if GVoice just quit or the
+            // remap was turned off mid-hold: otherwise the chord stays down.
+            guard self.gvoiceIntegration.runningPID != nil || !pressed else {
+                return
+            }
+
+            self.gvoiceIntegration.dispatchPTTEvent(pressed: pressed, location: .zero)
         }
 
         eventTapController.onStateChange = { [weak self] in
             self?.updateMenu()
         }
 
-        wisprIntegration.onStateChange = { [weak self] in
+        gvoiceIntegration.onStateChange = { [weak self] in
             self?.updateMenu()
         }
     }
@@ -110,10 +116,10 @@ final class AppCoordinator: NSObject {
         menu.addItem(permissionsItem)
         self.permissionsItem = permissionsItem
 
-        let wisprItem = NSMenuItem(title: "", action: #selector(refreshWisprStatus), keyEquivalent: "")
-        wisprItem.target = self
-        menu.addItem(wisprItem)
-        self.wisprItem = wisprItem
+        let gvoiceItem = NSMenuItem(title: "", action: #selector(refreshGVoiceStatus), keyEquivalent: "")
+        gvoiceItem.target = self
+        menu.addItem(gvoiceItem)
+        self.gvoiceItem = gvoiceItem
 
         let volumePreviewItem = NSMenuItem(title: "Show Volume HUD", action: #selector(showVolumeHUDPreview), keyEquivalent: "")
         volumePreviewItem.target = self
@@ -157,35 +163,31 @@ final class AppCoordinator: NSObject {
             permissionsItem?.title = "Grant: " + missing.joined(separator: ", ")
         }
 
-        wisprItem?.title = wisprMenuTitle()
+        gvoiceItem?.title = gvoiceMenuTitle()
         statusItem?.button?.title = summaryTitle(
             hasDevice: deviceMonitor.hasMatchedDevice,
             hasPermission: accessibilityGranted,
-            wisprReady: wisprIntegration.pttBindingState == .configured
+            gvoiceReady: gvoiceIntegration.installState == .installed
         )
     }
 
-    private func wisprMenuTitle() -> String {
-        switch wisprIntegration.pttBindingState {
-        case .configured:
-            return wisprIntegration.runningPID == nil ? "Wispr: PTT configured, app not running" : "Wispr: PTT configured"
-        case .missingConfig:
-            return "Wispr: config not found"
-        case .bindingMismatch:
-            return "Wispr: no supported PTT shortcut found"
-        case .invalidConfig:
-            return "Wispr: config unreadable"
+    private func gvoiceMenuTitle() -> String {
+        switch gvoiceIntegration.installState {
+        case .installed:
+            return gvoiceIntegration.runningPID == nil ? "GVoice: installed, app not running" : "GVoice: ready"
+        case .notInstalled:
+            return "GVoice: not installed"
         }
     }
 
-    private func summaryTitle(hasDevice: Bool, hasPermission: Bool, wisprReady: Bool) -> String {
+    private func summaryTitle(hasDevice: Bool, hasPermission: Bool, gvoiceReady: Bool) -> String {
         if !hasPermission {
             return "Options !"
         }
         if !hasDevice {
             return "Options ?"
         }
-        return wisprReady ? "Options MX" : "Options MX!"
+        return gvoiceReady ? "Options MX" : "Options MX!"
     }
 
     @objc
@@ -252,8 +254,8 @@ final class AppCoordinator: NSObject {
     }
 
     @objc
-    private func refreshWisprStatus() {
-        wisprIntegration.refreshConfiguration()
+    private func refreshGVoiceStatus() {
+        gvoiceIntegration.refreshConfiguration()
         updateMenu()
     }
 
