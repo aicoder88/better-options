@@ -5,18 +5,19 @@ final class HIDDeviceMonitor {
     typealias Callback = () -> Void
     typealias PTTButtonCallback = (_ isPressed: Bool, _ usage: UInt32) -> Void
     typealias ThumbWheelCallback = (_ delta: Int) -> Void
+    typealias ConsumerKeyCallback = (_ usage: UInt32, _ isPressed: Bool) -> Void
 
     private let manager: IOHIDManager
     private let callbackQueue = DispatchQueue(label: "logiremap.hid-monitor")
-    private let acceptedNamePrefixes = [
-        "MX Master 3",
-    ]
     private let thumbWheelUsages: Set<UsageKey> = [
         UsageKey(page: UInt32(kHIDPage_Consumer), usage: UInt32(kHIDUsage_Csmr_ACPan)),
         UsageKey(page: UInt32(kHIDPage_Consumer), usage: UInt32(kHIDUsage_Csmr_ACPanLeft)),
         UsageKey(page: UInt32(kHIDPage_Consumer), usage: UInt32(kHIDUsage_Csmr_ACPanRight)),
     ]
     private let pttCandidateButtonUsages = Set(UInt32(6)...UInt32(16))
+    /// The function-row keys worth reporting. Anything else the keyboard sends
+    /// is left alone rather than routed through the remap.
+    private let keyboardConsumerUsages = Set(ConsumerKey.selectable)
 
     private var trackedDevices: [OpaquePointer: DeviceInfo] = [:]
     private let lock = NSLock()
@@ -24,10 +25,13 @@ final class HIDDeviceMonitor {
     private var lastPTTDownAt: UInt64 = 0
     private var lastPTTUpAt: UInt64 = 0
     private var lastObservedPTTUsage: UInt32?
+    private var lastConsumerKeyEventAt: UInt64 = 0
+    private var lastConsumerKeyUsage: UInt32?
 
     var onStateChange: Callback?
     var onPTTButtonEvent: PTTButtonCallback?
     var onThumbWheelEvent: ThumbWheelCallback?
+    var onConsumerKeyEvent: ConsumerKeyCallback?
 
     init() {
         manager = IOHIDManagerCreate(kCFAllocatorDefault, IOOptionBits(kIOHIDOptionsTypeNone))
@@ -43,6 +47,34 @@ final class HIDDeviceMonitor {
         lock.withLock {
             trackedDevices.values.first?.productName
         }
+    }
+
+    /// Every device plugged in right now that this app knows how to remap,
+    /// named by model rather than by the Mac's longer product name.
+    ///
+    /// Bindings are saved against the model, because the file already on disk
+    /// keys them on `mx-master-3`. Using the full product name instead would
+    /// leave every one of those bindings pointing at a device that never turns
+    /// up.
+    var connectedKnownDevices: [KnownDevice] {
+        let devices = lock.withLock {
+            trackedDevices.values.map(\.known)
+        }
+
+        // One physical device shows up several times, once per interface it
+        // exposes.
+        return KnownDevice.all.filter(devices.contains)
+    }
+
+    /// The model of the mouse in use, e.g. `MX Master 3`.
+    var activeDeviceModel: String? {
+        connectedKnownDevices.first(where: { $0.type == .mouse })?.model
+    }
+
+    /// The names to show in the menu, e.g. `MX Master 3, MX Keys S`.
+    var activeDeviceDisplayName: String? {
+        let models = connectedKnownDevices.map(\.model)
+        return models.isEmpty ? nil : models.joined(separator: ", ")
     }
 
     var hasInputMonitoring: Bool {
@@ -99,12 +131,13 @@ final class HIDDeviceMonitor {
 
     private func registerIfRelevant(_ device: IOHIDDevice) {
         guard let productName = propertyString(kIOHIDProductKey, device: device),
-              matchesAcceptedProduct(productName) else {
+              let known = KnownDevice.matching(productName: productName) else {
             return
         }
 
         let info = DeviceInfo(
             productName: productName,
+            known: known,
             vendorID: propertyInt(kIOHIDVendorIDKey, device: device),
             productID: propertyInt(kIOHIDProductIDKey, device: device)
         )
@@ -139,18 +172,14 @@ final class HIDDeviceMonitor {
         }
     }
 
-    private func matchesAcceptedProduct(_ productName: String) -> Bool {
-        acceptedNamePrefixes.contains(where: { productName.hasPrefix($0) })
-    }
-
     private func recordInput(value: IOHIDValue) {
         let element = IOHIDValueGetElement(value)
         let device = IOHIDElementGetDevice(element)
         let deviceKey = OpaquePointer(Unmanaged.passUnretained(device).toOpaque())
-        let isTracked = lock.withLock {
-            trackedDevices[deviceKey] != nil
+        let deviceType: DeviceType? = lock.withLock {
+            trackedDevices[deviceKey]?.known.type
         }
-        guard isTracked else {
+        guard let deviceType else {
             return
         }
 
@@ -164,20 +193,36 @@ final class HIDDeviceMonitor {
         var thumbWheelDelta: Int?
         var shouldDispatchPTT = false
         var pttUsage: UInt32?
+        var consumerKeyUsage: UInt32?
 
         lock.withLock {
-            if thumbWheelUsages.contains(usage), integerValue != 0 {
-                lastThumbWheelEventAt = now
-                thumbWheelDelta = integerValue
-            } else if usage.page == UInt32(kHIDPage_Button), pttCandidateButtonUsages.contains(usage.usage) {
-                lastObservedPTTUsage = usage.usage
-                if integerValue == 0 {
-                    lastPTTUpAt = now
-                } else {
-                    lastPTTDownAt = now
+            switch deviceType {
+            case .keyboard:
+                // The keyboard's own wheel-like controls share usage numbers
+                // with the mouse's, so only the function row is read here.
+                guard usage.page == UInt32(kHIDPage_Consumer),
+                      keyboardConsumerUsages.contains(usage.usage) else {
+                    return
                 }
-                shouldDispatchPTT = true
-                pttUsage = usage.usage
+
+                lastConsumerKeyEventAt = now
+                lastConsumerKeyUsage = usage.usage
+                consumerKeyUsage = usage.usage
+
+            case .mouse:
+                if thumbWheelUsages.contains(usage), integerValue != 0 {
+                    lastThumbWheelEventAt = now
+                    thumbWheelDelta = integerValue
+                } else if usage.page == UInt32(kHIDPage_Button), pttCandidateButtonUsages.contains(usage.usage) {
+                    lastObservedPTTUsage = usage.usage
+                    if integerValue == 0 {
+                        lastPTTUpAt = now
+                    } else {
+                        lastPTTDownAt = now
+                    }
+                    shouldDispatchPTT = true
+                    pttUsage = usage.usage
+                }
             }
         }
 
@@ -193,6 +238,25 @@ final class HIDDeviceMonitor {
                 self?.onStateChange?()
             }
         }
+
+        if let consumerKeyUsage {
+            DispatchQueue.main.async { [weak self] in
+                self?.onConsumerKeyEvent?(consumerKeyUsage, integerValue != 0)
+            }
+        }
+    }
+
+    /// Whether the keyboard just sent this key, so the Mac's own copy of the
+    /// keypress can be swallowed instead of firing on top of the remap.
+    func sawRecentConsumerKey(_ usage: UInt32, within seconds: TimeInterval) -> Bool {
+        // Both halves are read together: the key and the moment it arrived have
+        // to describe the same press, and a press on another key can land
+        // between two reads.
+        let (matches, timestamp) = lock.withLock {
+            (lastConsumerKeyUsage == usage, lastConsumerKeyEventAt)
+        }
+
+        return matches && recentEvent(timestamp, within: seconds)
     }
 
     private func propertyString(_ key: String, device: IOHIDDevice) -> String? {
@@ -244,6 +308,7 @@ final class HIDDeviceMonitor {
 
 private struct DeviceInfo {
     let productName: String
+    let known: KnownDevice
     let vendorID: Int?
     let productID: Int?
 }

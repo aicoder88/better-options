@@ -182,7 +182,11 @@ final class MediaKeySender {
         return volume
     }
 
-    private func sendMediaKey(_ keyCode: Int) {
+    /// Posts a system-defined media key press+release, the same way the real
+    /// key does. Not `private`: `SystemActionSender` reuses it for the keys
+    /// that have no CoreAudio call to fall back to (mute, brightness,
+    /// playback).
+    func sendMediaKey(_ keyCode: Int) {
         postSystemDefinedEvent(keyCode: keyCode, isDown: true)
         postSystemDefinedEvent(keyCode: keyCode, isDown: false)
     }

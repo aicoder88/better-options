@@ -8,12 +8,16 @@ final class AppCoordinator: NSObject {
     }
 
     private let deviceMonitor = HIDDeviceMonitor()
+    private let deviceRegistry = DeviceRegistry()
     private let gvoiceIntegration = GVoiceIntegration()
     private let mediaKeySender = MediaKeySender()
+    private let settingsStore = SettingsStore()
     private let volumeHUDController = VolumeHUDController()
-    private lazy var eventTapController = EventTapController(
-        deviceMonitor: deviceMonitor,
-        gvoiceIntegration: gvoiceIntegration
+    private lazy var systemActionSender = SystemActionSender(mediaKeySender: mediaKeySender)
+    private lazy var eventTapController = EventTapController(deviceMonitor: deviceMonitor)
+    private lazy var settingsWindowController = SettingsWindowController(
+        store: settingsStore,
+        deviceRegistry: deviceRegistry
     )
 
     private var statusItem: NSStatusItem?
@@ -37,6 +41,8 @@ final class AppCoordinator: NSObject {
     }
 
     func start() {
+        settingsStore.load()
+
         buildMenu()
         wireCallbacks()
 
@@ -50,6 +56,7 @@ final class AppCoordinator: NSObject {
 
     private func wireCallbacks() {
         deviceMonitor.onStateChange = { [weak self] in
+            self?.syncDeviceRegistry()
             self?.updateMenu()
         }
 
@@ -58,16 +65,10 @@ final class AppCoordinator: NSObject {
                 return
             }
 
-            let volume: Float?
-            if delta > 0 {
-                volume = self.mediaKeySender.sendVolumeDown()
-            } else {
-                volume = self.mediaKeySender.sendVolumeUp()
-            }
-
-            if let volume {
-                self.volumeHUDController.show(volume: volume)
-            }
+            // Which way the wheel default binds to volume up vs. down; any
+            // other action bound to that direction fires instead.
+            let trigger: Trigger = delta > 0 ? .thumbWheelRight : .thumbWheelLeft
+            self.fireMomentaryTrigger(trigger)
         }
 
         deviceMonitor.onPTTButtonEvent = { [weak self] pressed, _ in
@@ -75,13 +76,41 @@ final class AppCoordinator: NSObject {
                 return
             }
 
-            // A release always goes through, even if GVoice just quit or the
-            // remap was turned off mid-hold: otherwise the chord stays down.
-            guard self.gvoiceIntegration.runningPID != nil || !pressed else {
+            self.fireSideButton(pressed: pressed)
+        }
+
+        deviceMonitor.onConsumerKeyEvent = { [weak self] usage, pressed in
+            // Fires once, when the key goes down, the way a media key does.
+            guard let self, self.remappingEnabled, pressed else {
                 return
             }
 
-            self.gvoiceIntegration.dispatchPTTEvent(pressed: pressed, location: .zero)
+            self.fireMomentaryTrigger(.consumerKey(usage), deviceID: self.currentKeyboardID())
+        }
+
+        eventTapController.shouldHandleConsumerKey = { [weak self] usage in
+            guard let self else {
+                return false
+            }
+
+            return self.keyboardAction(for: usage) != .passThrough
+        }
+
+        eventTapController.shouldHandleSideButton = { [weak self] in
+            guard let self else {
+                return false
+            }
+
+            let sideButtonAction = self.action(for: .sideButton)
+            if sideButtonAction == .passThrough {
+                return false
+            }
+            if sideButtonAction.isPushToTalk {
+                // Only takes the click while GVoice can actually answer it —
+                // otherwise let it through as the normal back-button click.
+                return self.gvoiceIntegration.runningPID != nil
+            }
+            return true
         }
 
         eventTapController.onStateChange = { [weak self] in
@@ -93,9 +122,116 @@ final class AppCoordinator: NSObject {
         }
     }
 
+    private func currentDeviceID() -> String {
+        deviceRegistry.activeDevice?.id ?? settingsStore.defaultDeviceID
+    }
+
+    private func currentKeyboardID() -> String {
+        deviceRegistry.activeKeyboard?.id ?? settingsStore.defaultKeyboardID
+    }
+
+    private func action(for trigger: Trigger) -> Action {
+        settingsStore.action(for: trigger, deviceID: currentDeviceID())
+    }
+
+    private func keyboardAction(for usage: UInt32) -> Action {
+        settingsStore.action(for: .consumerKey(usage), deviceID: currentKeyboardID())
+    }
+
+    /// Fires whatever a tap-like control is bound to — a wheel tick or a key
+    /// on the function row. GVoice PTT toggles here instead of holding, since
+    /// a tap has no separate release to end the hold on.
+    private func fireMomentaryTrigger(_ trigger: Trigger, deviceID: String? = nil) {
+        let action = settingsStore.action(for: trigger, deviceID: deviceID ?? currentDeviceID())
+
+        if action.isPushToTalk {
+            guard gvoiceIntegration.runningPID != nil else {
+                return
+            }
+            gvoiceIntegration.togglePTT()
+            return
+        }
+
+        if let volume = systemActionSender.perform(action) {
+            volumeHUDController.show(volume: volume)
+        }
+    }
+
+    /// Fires whatever the side button is bound to. GVoice PTT holds for
+    /// exactly as long as the button is down, same as it always has; any
+    /// other action fires once, on press.
+    private func fireSideButton(pressed: Bool) {
+        guard action(for: .sideButton).isPushToTalk else {
+            if pressed, let volume = systemActionSender.perform(action(for: .sideButton)) {
+                volumeHUDController.show(volume: volume)
+            }
+            return
+        }
+
+        // A release always goes through, even if GVoice just quit or the
+        // remap was turned off mid-hold: otherwise the chord stays down.
+        guard gvoiceIntegration.runningPID != nil || !pressed else {
+            return
+        }
+
+        gvoiceIntegration.dispatchPTTEvent(pressed: pressed, location: .zero)
+    }
+
+    /// The menu bar icon: a keyboard with a mouse beside it, overlapping.
+    ///
+    /// Both symbols are drawn into one image, which is what 0.2 did and why it
+    /// reached for the drawing calls at all. The picture is the point — this
+    /// app remaps a keyboard and a mouse, and the icon says so at a glance.
+    /// Marked as a template so macOS colours it to suit a light or dark menu
+    /// bar rather than it being painted one fixed colour.
+    private static func menuBarIcon() -> NSImage? {
+        let configuration = NSImage.SymbolConfiguration(pointSize: 11, weight: .regular)
+        guard let keyboard = NSImage(systemSymbolName: "keyboard", accessibilityDescription: nil)?
+            .withSymbolConfiguration(configuration),
+              let mouse = NSImage(systemSymbolName: "computermouse", accessibilityDescription: nil)?
+            .withSymbolConfiguration(configuration) else {
+            return nil
+        }
+
+        // The mouse sits to the right and slightly taller than the keyboard,
+        // overlapping its edge, so the pair reads as one mark rather than two
+        // icons that happen to be next to each other.
+        let keyboardSize = NSSize(width: 15, height: 10)
+        let mouseSize = NSSize(width: 7, height: 12)
+        let overlap: CGFloat = 2
+        let size = NSSize(
+            width: keyboardSize.width + mouseSize.width - overlap,
+            height: mouseSize.height
+        )
+
+        let icon = NSImage(size: size)
+        icon.lockFocus()
+        keyboard.draw(in: NSRect(
+            x: 0,
+            y: (size.height - keyboardSize.height) / 2,
+            width: keyboardSize.width,
+            height: keyboardSize.height
+        ))
+        mouse.draw(in: NSRect(
+            x: size.width - mouseSize.width,
+            y: 0,
+            width: mouseSize.width,
+            height: mouseSize.height
+        ))
+        icon.unlockFocus()
+        icon.isTemplate = true
+
+        return icon
+    }
+
     private func buildMenu() {
-        let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
-        item.button?.title = "Options"
+        // A fixed square slot, the width 0.2 took. Left to size itself the
+        // slot grows with the icon and shoves everything else along the bar.
+        let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
+        item.button?.image = Self.menuBarIcon()
+        item.button?.imagePosition = .imageOnly
+        item.button?.imageScaling = .scaleProportionallyDown
+        item.button?.title = ""
         statusItem = item
 
         let menu = NSMenu()
@@ -106,10 +242,14 @@ final class AppCoordinator: NSObject {
         menu.addItem(deviceStatusItem)
         self.deviceStatusItem = deviceStatusItem
 
-        let remapToggleItem = NSMenuItem(title: "", action: #selector(toggleRemapping), keyEquivalent: "")
+        let remapToggleItem = NSMenuItem(title: "Remapping Enabled", action: #selector(toggleRemapping), keyEquivalent: "")
         remapToggleItem.target = self
         menu.addItem(remapToggleItem)
         self.remapToggleItem = remapToggleItem
+
+        let resetItem = NSMenuItem(title: "Reset to Defaults", action: #selector(resetToDefaults), keyEquivalent: "")
+        resetItem.target = self
+        menu.addItem(resetItem)
 
         let permissionsItem = NSMenuItem(title: "", action: #selector(requestAccessibilityPermissions), keyEquivalent: "")
         permissionsItem.target = self
@@ -125,6 +265,10 @@ final class AppCoordinator: NSObject {
         volumePreviewItem.target = self
         menu.addItem(volumePreviewItem)
         self.volumePreviewItem = volumePreviewItem
+
+        let settingsItem = NSMenuItem(title: "Settings...", action: #selector(openSettings), keyEquivalent: ",")
+        settingsItem.target = self
+        menu.addItem(settingsItem)
 
         menu.addItem(.separator())
 
@@ -142,33 +286,46 @@ final class AppCoordinator: NSObject {
 
     private func updateMenu() {
         let accessibilityGranted = eventTapController.hasAccessibilityPermission
-        let inputMonitoring = deviceMonitor.hasInputMonitoring
+        let inputMonitoringGranted = deviceMonitor.hasInputMonitoring
         let tapReady = eventTapController.isTapInstalled
-        let deviceName = deviceMonitor.activeDeviceName ?? "No MX Master 3 detected"
-        let statusPrefix = deviceMonitor.hasMatchedDevice ? "Device: " : "Waiting: "
-        deviceStatusItem?.title = statusPrefix + deviceName
 
+        deviceStatusItem?.title = deviceMonitor.activeDeviceDisplayName.map { "Devices: \($0)" } ?? "No devices detected"
+        deviceStatusItem?.toolTip = deviceMonitor.hasMatchedDevice ? "Device connected" : "No matched device detected"
+
+        // The line says what picking it will do, which is how 0.2 read.
         remapToggleItem?.title = remappingEnabled ? "Disable Remapping" : "Enable Remapping"
+        remapToggleItem?.state = remappingEnabled ? .on : .off
         remapToggleItem?.isEnabled = accessibilityGranted && tapReady
 
-        if accessibilityGranted {
-            permissionsItem?.isHidden = true
+        // Both permissions matter and they are granted in different places:
+        // without Accessibility nothing can be remapped, without Input
+        // Monitoring the mouse and keyboard are invisible and every control
+        // silently does nothing. One line names whichever is still missing.
+        var missingPermissions: [String] = []
+        if !accessibilityGranted {
+            missingPermissions.append("Accessibility")
+        }
+        if !inputMonitoringGranted {
+            missingPermissions.append("Input Monitoring")
+        }
+
+        if missingPermissions.isEmpty {
+            permissionsItem?.title = "Accessibility granted"
+            permissionsItem?.isEnabled = false
+            accessibilitySettingsItem?.isHidden = true
+        } else if accessibilityGranted {
+            permissionsItem?.title = "Grant: " + missingPermissions.joined(separator: ", ")
+            permissionsItem?.isEnabled = true
             accessibilitySettingsItem?.isHidden = true
         } else {
-            permissionsItem?.isHidden = false
+            permissionsItem?.title = missingPermissions.count > 1
+                ? "Grant: " + missingPermissions.joined(separator: ", ")
+                : "Accessibility permission required"
+            permissionsItem?.isEnabled = true
             accessibilitySettingsItem?.isHidden = false
-            var missing: [String] = []
-            if !accessibilityGranted { missing.append("Accessibility") }
-            if !inputMonitoring { missing.append("Input Monitoring") }
-            permissionsItem?.title = "Grant: " + missing.joined(separator: ", ")
         }
 
         gvoiceItem?.title = gvoiceMenuTitle()
-        statusItem?.button?.title = summaryTitle(
-            hasDevice: deviceMonitor.hasMatchedDevice,
-            hasPermission: accessibilityGranted,
-            gvoiceReady: gvoiceIntegration.installState == .installed
-        )
     }
 
     private func gvoiceMenuTitle() -> String {
@@ -180,14 +337,25 @@ final class AppCoordinator: NSObject {
         }
     }
 
-    private func summaryTitle(hasDevice: Bool, hasPermission: Bool, gvoiceReady: Bool) -> String {
-        if !hasPermission {
-            return "Options !"
+    /// Keeps the list the settings window offers in step with what is plugged
+    /// in right now — the mouse, the keyboard, or both.
+    private func syncDeviceRegistry() {
+        let connected = deviceMonitor.connectedKnownDevices
+        let connectedIDs = Set(connected.map(\.id))
+
+        for device in deviceRegistry.connected where !connectedIDs.contains(device.id) {
+            deviceRegistry.remove(id: device.id)
         }
-        if !hasDevice {
-            return "Options ?"
+
+        for device in connected {
+            deviceRegistry.register(name: device.model, type: device.type)
         }
-        return gvoiceReady ? "Options MX" : "Options MX!"
+    }
+
+    @objc
+    private func openSettings() {
+        syncDeviceRegistry()
+        settingsWindowController.show()
     }
 
     @objc
@@ -196,8 +364,20 @@ final class AppCoordinator: NSObject {
     }
 
     @objc
+    private func resetToDefaults() {
+        settingsStore.resetToDefaults(deviceID: deviceRegistry.activeDevice?.id)
+        updateMenu()
+    }
+
+    /// Picking the permissions line asks for whichever one is still missing.
+    @objc
     private func requestAccessibilityPermissions() {
-        evaluateAccessibilityPermissions(promptIfNeeded: true)
+        guard eventTapController.hasAccessibilityPermission else {
+            evaluateAccessibilityPermissions(promptIfNeeded: true)
+            return
+        }
+
+        openInputMonitoringSettings()
     }
 
     private func requestAccessibilityPermissionsIfNeeded() {
@@ -267,6 +447,14 @@ final class AppCoordinator: NSObject {
     @objc
     private func openAccessibilitySettings() {
         guard let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility") else {
+            return
+        }
+        NSWorkspace.shared.open(url)
+    }
+
+    @objc
+    private func openInputMonitoringSettings() {
+        guard let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ListenEvent") else {
             return
         }
         NSWorkspace.shared.open(url)

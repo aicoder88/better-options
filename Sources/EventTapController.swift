@@ -1,3 +1,4 @@
+import AppKit
 import ApplicationServices
 import CoreGraphics
 import Foundation
@@ -6,7 +7,6 @@ final class EventTapController {
     typealias Callback = () -> Void
 
     private let deviceMonitor: HIDDeviceMonitor
-    private let gvoiceIntegration: GVoiceIntegration
 
     private var eventTap: CFMachPort?
     private var runLoopSource: CFRunLoopSource?
@@ -14,9 +14,19 @@ final class EventTapController {
     var onStateChange: Callback?
     var isEnabled = true
 
-    init(deviceMonitor: HIDDeviceMonitor, gvoiceIntegration: GVoiceIntegration) {
+    /// Asked before swallowing a side-button press: true means "something is
+    /// bound to it and ready to run, take the event instead of letting it
+    /// through as a browser-back click." The caller decides what "ready"
+    /// means per action (GVoice only says yes while it's actually running).
+    var shouldHandleSideButton: (() -> Bool)?
+
+    /// Asked before swallowing a function-row key on the keyboard: true means
+    /// that key has been pointed at something other than what it is printed
+    /// with, so the Mac's own copy of the press must not fire on top of it.
+    var shouldHandleConsumerKey: ((UInt32) -> Bool)?
+
+    init(deviceMonitor: HIDDeviceMonitor) {
         self.deviceMonitor = deviceMonitor
-        self.gvoiceIntegration = gvoiceIntegration
     }
 
     var hasAccessibilityPermission: Bool {
@@ -52,6 +62,7 @@ final class EventTapController {
             CGEventMask(1 << CGEventType.scrollWheel.rawValue) |
             CGEventMask(1 << CGEventType.otherMouseDown.rawValue) |
             CGEventMask(1 << CGEventType.otherMouseUp.rawValue) |
+            CGEventMask(1 << Self.systemDefinedEventType) |
             CGEventMask(1 << CGEventType.tapDisabledByTimeout.rawValue) |
             CGEventMask(1 << CGEventType.tapDisabledByUserInput.rawValue)
 
@@ -89,8 +100,39 @@ final class EventTapController {
         case .otherMouseUp:
             return handlePotentialPTTMouseEvent(event, pressed: false)
         default:
+            guard type.rawValue == Self.systemDefinedEventType else {
+                return Unmanaged.passRetained(event)
+            }
+            return handlePotentialConsumerKeyEvent(event)
+        }
+    }
+
+    /// The media keys arrive as this kind of event, which `CGEventType` has no
+    /// name for.
+    private static let systemDefinedEventType: UInt32 = 14
+    /// Within a system-defined event, the one flavour that means a media key.
+    private static let mediaKeySubtype = 8
+
+    /// Swallows a function-row key only when it has been pointed somewhere
+    /// else and the keyboard itself just sent it. Anything else — another
+    /// keyboard, an unbound key, the remap switched off — goes through
+    /// untouched, so the keys keep doing what they are printed with.
+    private func handlePotentialConsumerKeyEvent(_ event: CGEvent) -> Unmanaged<CGEvent>? {
+        guard isEnabled,
+              let nsEvent = NSEvent(cgEvent: event),
+              nsEvent.subtype.rawValue == Self.mediaKeySubtype else {
             return Unmanaged.passRetained(event)
         }
+
+        let data1 = nsEvent.data1
+        let keyCode = Int((data1 & 0xFFFF_0000) >> 16)
+        guard let usage = ConsumerKey.usage(forSystemKeyCode: keyCode),
+              shouldHandleConsumerKey?(usage) ?? false,
+              deviceMonitor.sawRecentConsumerKey(usage, within: 0.2) else {
+            return Unmanaged.passRetained(event)
+        }
+
+        return nil
     }
 
     private func handleScroll(_ event: CGEvent) -> Unmanaged<CGEvent>? {
@@ -134,7 +176,7 @@ final class EventTapController {
             return Unmanaged.passRetained(event)
         }
 
-        guard gvoiceIntegration.runningPID != nil else {
+        guard shouldHandleSideButton?() ?? false else {
             return Unmanaged.passRetained(event)
         }
 

@@ -53,6 +53,15 @@ final class GVoiceIntegration {
         }
     }
 
+    /// Flips the chord: down if it isn't held, up if it is.
+    ///
+    /// Used by a trigger that fires one momentary event instead of being held
+    /// down — the thumb wheel has no separate press and release to bind PTT
+    /// to, so a tick starts the hold and the next tick ends it.
+    func togglePTT() {
+        dispatchPTTEvent(pressed: !chordIsHeld, location: .zero)
+    }
+
     /// Releases a chord left hanging (mouse unplugged, remapping switched off)
     /// so GVoice can't keep recording with no way to stop it.
     func releaseHeldChord() {
