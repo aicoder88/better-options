@@ -385,3 +385,45 @@ What remains in the comparison is:
   PTT — 0.2's ten, with GVoice in the dictation slot.
 - Menu bar icon measured at 24 points wide, same as 0.2, and photographed for comparison.
 - Test copies quit and deleted. Only the installed 0.2 (pid 1139) is running.
+
+---
+
+# Installed and pushed — 2026-08-14
+
+**Installed.** `scripts/install.sh` ran with Mark's go. It saved the running 0.2 to
+`/Users/macmini/.app-backups/BetterOptions/2026-08-14-014830/` first — checked, and that
+folder holds a real app bundle reporting version 0.2, 728K. `/Applications/BetterOptions.app`
+now reports `0.3` and is running (pid 40511 at the time). It sees both devices:
+`Devices: MX Master 3, MX Keys S`. The menu bar slot measures 24 points, same as 0.2.
+
+The installer's last line, `sudo launchctl load`, failed with "Expecting a LaunchDaemons
+path" — macOS no longer accepts `load` for a LaunchAgent run as root, and the agent was
+already registered anyway. Harmless: the plist is in place at
+`/Library/LaunchAgents/com.dgcode88.betteroptions.plist`, it was started into the current
+login session with `launchctl bootstrap gui/<uid>`, and it will start at login as before.
+
+Mark's live settings file was not touched by the install: sha256 `d14e5f41…` before and
+after.
+
+**Pushed.** The rebuild is on `main` at `aicoder88/better-options`, commit `0a732b0`.
+`main` and `origin/main` match. The `artifact/v0.2-binary` branch is untouched and still
+holds the preserved 0.2 binary, locally and on GitHub.
+
+## Still to do, and only Mark can do it
+
+**Both permissions were revoked by the install, and until they are granted the mouse and
+keyboard do nothing.** This is macOS behaviour, not a fault: replacing the app changes its
+signature, so the old grants no longer apply. The app's own menu says which are missing —
+right now `Grant: Accessibility, Input Monitoring`.
+
+In System Settings → Privacy & Security:
+- **Accessibility** — tick Better Options.
+- **Input Monitoring** — tick Better Options.
+
+If a stale entry is already listed, remove it with the minus button and add
+`/Applications/BetterOptions.app` again, otherwise the tick can appear on without taking
+effect. The menu line changes to `Accessibility granted` once both are through.
+
+Not verified until that is done: an actual press of a remapped key or button doing the new
+thing. Everything up to the event tap is checked; the tap itself cannot install without
+Accessibility.
