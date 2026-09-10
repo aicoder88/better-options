@@ -197,6 +197,32 @@ do {
     expectEqual(store.action(for: .sideButton, deviceID: "mx-master-3"), .gvoicePTT, "falls back to side button = GVoice")
 }
 
+// A name this build has never heard of has to be left alone rather than
+// swallowed: swallowing it and then not knowing what to do kills the key.
+print("An action name this build does not know")
+do {
+    expect(!Action.passThrough.isSupported, "Pass Through is left alone")
+    expect(Action.volumeUp.isSupported, "Volume Up is carried out")
+    expect(Action.gvoicePTT.isSupported, "GVoice dictation is carried out")
+    expect(Action(rawValue: "wisprPTT").isSupported, "the old dictation name is carried out")
+    expect(!Action(rawValue: "somethingNewer").isSupported, "a name from a future build is left alone")
+
+    let futureBuild = """
+    {"bindings":[\
+    {"action":"somethingNewer","deviceID":"mx-keys-s","trigger":{"consumerKey":{"usage":233}}},\
+    {"action":"somethingNewer","deviceID":"mx-master-3","trigger":{"sideButton":{}}}\
+    ],"enabled":true,"version":1}
+    """
+    let copy = try workingCopy(of: Data(futureBuild.utf8))
+    let store = SettingsStore(fileURL: copy)
+    expect(store.load(), "a file from a future build loads")
+    expect(!store.action(for: .consumerKey(233), deviceID: "mx-keys-s").isSupported, "its key is left alone")
+    expect(!store.action(for: .sideButton, deviceID: "mx-master-3").isSupported, "its side button is left alone")
+    try store.save()
+    let rewritten = String(data: try Data(contentsOf: copy), encoding: .utf8) ?? ""
+    expect(rewritten.contains("somethingNewer"), "and the name is still in the file after a save")
+}
+
 print("Mice")
 do {
     expectEqual(Device.identifier(for: "MX Master 3"), "mx-master-3", "the mouse name matches the one in the saved file")
@@ -221,6 +247,19 @@ do {
 
     registry.remove(id: "mx-master-3")
     expectEqual(registry.activeDevice?.id ?? "", "mx-anywhere-3", "unplugging one leaves the other")
+}
+
+// The mouse's controls must never be looked up under the keyboard's name.
+print("Keyboards are not mice")
+do {
+    let registry = DeviceRegistry()
+    registry.register(name: "MX Keys S", type: .keyboard)
+    expect(registry.activeDevice == nil, "a keyboard on its own is not the active mouse")
+    expectEqual(registry.activeKeyboard?.id ?? "", "mx-keys-s", "it is the active keyboard")
+
+    registry.register(name: "MX Master 3", type: .mouse)
+    expectEqual(registry.activeDevice?.id ?? "", "mx-master-3", "plugging the mouse in makes it the active mouse")
+    expectEqual(registry.activeKeyboard?.id ?? "", "mx-keys-s", "and the keyboard is still the keyboard")
 }
 
 if failures.isEmpty {

@@ -25,6 +25,16 @@ final class EventTapController {
     /// with, so the Mac's own copy of the press must not fire on top of it.
     var shouldHandleConsumerKey: ((UInt32) -> Bool)?
 
+    /// Asked before swallowing a sideways wheel tick: true means the wheel has
+    /// been pointed at something this build can carry out. With the wheel left
+    /// on Default (Pass Through) it must not be swallowed, or the wheel does
+    /// nothing at all instead of scrolling sideways.
+    ///
+    /// It asks about the wheel, not about one direction of it: a sideways
+    /// scroll event and the mouse's own report of the tick do not have to agree
+    /// on which way is which, and guessing wrong would swallow the wrong half.
+    var shouldHandleThumbWheel: (() -> Bool)?
+
     init(deviceMonitor: HIDDeviceMonitor) {
         self.deviceMonitor = deviceMonitor
     }
@@ -146,6 +156,10 @@ final class EventTapController {
         }
 
         guard deviceMonitor.sawRecentThumbWheelEvent(within: 0.2) else {
+            return Unmanaged.passRetained(event)
+        }
+
+        guard shouldHandleThumbWheel?() ?? false else {
             return Unmanaged.passRetained(event)
         }
 

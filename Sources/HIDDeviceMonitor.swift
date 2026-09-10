@@ -3,9 +3,9 @@ import IOKit.hid
 
 final class HIDDeviceMonitor {
     typealias Callback = () -> Void
-    typealias PTTButtonCallback = (_ isPressed: Bool, _ usage: UInt32) -> Void
-    typealias ThumbWheelCallback = (_ delta: Int) -> Void
-    typealias ConsumerKeyCallback = (_ usage: UInt32, _ isPressed: Bool) -> Void
+    typealias PTTButtonCallback = (_ isPressed: Bool, _ usage: UInt32, _ deviceID: String) -> Void
+    typealias ThumbWheelCallback = (_ delta: Int, _ deviceID: String) -> Void
+    typealias ConsumerKeyCallback = (_ usage: UInt32, _ isPressed: Bool, _ deviceID: String) -> Void
 
     private let manager: IOHIDManager
     private let callbackQueue = DispatchQueue(label: "logiremap.hid-monitor")
@@ -176,12 +176,17 @@ final class HIDDeviceMonitor {
         let element = IOHIDValueGetElement(value)
         let device = IOHIDElementGetDevice(element)
         let deviceKey = OpaquePointer(Unmanaged.passUnretained(device).toOpaque())
-        let deviceType: DeviceType? = lock.withLock {
-            trackedDevices[deviceKey]?.known.type
+        // Which device sent this, not just what kind it is: the binding that
+        // fires has to be the one saved for the device the hand was on.
+        let known: KnownDevice? = lock.withLock {
+            trackedDevices[deviceKey]?.known
         }
-        guard let deviceType else {
+        guard let known else {
             return
         }
+
+        let deviceType = known.type
+        let deviceID = known.id
 
         let usage = UsageKey(
             page: IOHIDElementGetUsagePage(element),
@@ -228,20 +233,20 @@ final class HIDDeviceMonitor {
 
         if let thumbWheelDelta {
             DispatchQueue.main.async { [weak self] in
-                self?.onThumbWheelEvent?(thumbWheelDelta)
+                self?.onThumbWheelEvent?(thumbWheelDelta, deviceID)
             }
         }
 
         if shouldDispatchPTT, let pttUsage {
             DispatchQueue.main.async { [weak self] in
-                self?.onPTTButtonEvent?(integerValue != 0, pttUsage)
+                self?.onPTTButtonEvent?(integerValue != 0, pttUsage, deviceID)
                 self?.onStateChange?()
             }
         }
 
         if let consumerKeyUsage {
             DispatchQueue.main.async { [weak self] in
-                self?.onConsumerKeyEvent?(consumerKeyUsage, integerValue != 0)
+                self?.onConsumerKeyEvent?(consumerKeyUsage, integerValue != 0, deviceID)
             }
         }
     }

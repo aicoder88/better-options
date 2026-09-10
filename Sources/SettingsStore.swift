@@ -210,6 +210,20 @@ struct Action: RawRepresentable, Hashable, Codable {
         rawValue.hasSuffix("PTT")
     }
 
+    /// Whether this build can actually carry the action out.
+    ///
+    /// A name written by a newer build is kept in the file, but this build has
+    /// no idea what it means. Treat it the way Pass Through is treated: leave
+    /// the control alone, so the key or button keeps doing what it is printed
+    /// with instead of being swallowed and then doing nothing at all.
+    var isSupported: Bool {
+        if isPushToTalk {
+            return true
+        }
+
+        return self != .passThrough && Action.selectable.contains(self)
+    }
+
     var displayName: String {
         switch self {
         case .passThrough: return "Default (Pass Through)"

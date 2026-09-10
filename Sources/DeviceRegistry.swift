@@ -99,8 +99,13 @@ final class DeviceRegistry {
     }
 
     /// The mouse whose bindings apply — the first one connected.
+    ///
+    /// Nothing when no mouse is connected. It used to answer with whatever was
+    /// connected, so with only the keyboard plugged in the keyboard was handed
+    /// back as "the mouse" and the mouse's controls were looked up under the
+    /// keyboard's name.
     var activeDevice: Device? {
-        connected.first { $0.type == .mouse } ?? connected.first
+        connected.first { $0.type == .mouse }
     }
 
     /// The keyboard whose bindings apply — the first one connected.

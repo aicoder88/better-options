@@ -7,4 +7,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         coordinator = AppCoordinator()
         coordinator?.start()
     }
+
+    /// Quitting mid-hold would otherwise leave dictation running with nothing
+    /// left on this Mac able to stop it.
+    func applicationWillTerminate(_ notification: Notification) {
+        coordinator?.releaseHeldControls()
+    }
 }

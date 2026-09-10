@@ -25,6 +25,12 @@ final class GVoiceIntegration {
     private(set) var installState: InstallState = .notInstalled
     private var chordIsHeld = false
 
+    /// Whether dictation is being held down right now. Read by the coordinator
+    /// so it can let go on the way out — sleep, quit, mouse unplugged.
+    var isHolding: Bool {
+        chordIsHeld
+    }
+
     var runningPID: pid_t? {
         NSRunningApplication.runningApplications(withBundleIdentifier: bundleIdentifier).first?.processIdentifier
     }
