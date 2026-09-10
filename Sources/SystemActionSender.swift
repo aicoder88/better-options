@@ -1,8 +1,8 @@
 import Foundation
 
 /// Fires the actions a trigger can be bound to, other than GVoice PTT (that one
-/// goes through `GVoiceIntegration` instead, since it holds a chord down rather
-/// than firing once).
+/// goes through `GVoiceIntegration` instead, since it holds a recording open
+/// rather than firing once).
 ///
 /// Volume Up and Volume Down reuse `MediaKeySender`'s existing handling
 /// unchanged. The rest post the same kind of system-defined media key event

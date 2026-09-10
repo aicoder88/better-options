@@ -62,5 +62,6 @@ Then go to **System Settings → Privacy & Security** and re-enable both **Acces
 ## Notes
 
 - Remapping only activates when a matching MX Master 3 device is connected.
-- Holding the Back button sends GVoice a held left Ctrl + left Cmd, one of the hold-to-talk triggers it already listens for. Better Options swallows the raw Back button so holding it doesn't also fire browser-back while you dictate — that is why it sends the chord instead of letting the raw button through.
-- If GVoice is not running, the Back button falls through to normal behavior.
+- Holding the Back button asks GVoice to record, over a local socket in GVoice's own folder (`~/Library/Application Support/GVoice/control/gvoice.sock`). No keys are faked any more: Better Options says "start" when the button goes down and "stop" when it comes up, and GVoice ends the recording by itself if Better Options stops answering. Set `BETTEROPTIONS_GVOICE_SOCKET` to talk to a GVoice running on its own data folder instead.
+- Better Options swallows the raw Back button so holding it doesn't also fire browser-back while you dictate.
+- If GVoice is not running, or is a build with no socket to talk on, the Back button falls through to normal behavior and the menu says which it is.

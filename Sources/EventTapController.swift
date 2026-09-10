@@ -10,6 +10,9 @@ final class EventTapController {
 
     private var eventTap: CFMachPort?
     private var runLoopSource: CFRunLoopSource?
+    /// Whether the side button's press was taken rather than passed on. Its
+    /// release has to go the same way, whatever has changed in between.
+    private var swallowedSideButtonPress = false
 
     var onStateChange: Callback?
     var isEnabled = true
@@ -186,6 +189,24 @@ final class EventTapController {
     }
 
     private func handlePotentialPTTMouseEvent(_ event: CGEvent, pressed: Bool) -> Unmanaged<CGEvent>? {
+        let buttonNumber = event.getIntegerValueField(.mouseEventButtonNumber)
+        guard buttonNumber >= 3 else {
+            return Unmanaged.passRetained(event)
+        }
+
+        if pressed {
+            // Every press starts the pairing again, so a release that never
+            // arrived (mouse unplugged mid-hold) cannot eat the next one.
+            swallowedSideButtonPress = false
+        } else if swallowedSideButtonPress {
+            // The press was swallowed, so its release has to be swallowed too,
+            // even though dictation may have become unavailable in between.
+            // Letting half a click through is how a stray browser-back lands
+            // at the end of a sentence.
+            swallowedSideButtonPress = false
+            return nil
+        }
+
         guard isEnabled, deviceMonitor.hasMatchedDevice else {
             return Unmanaged.passRetained(event)
         }
@@ -194,14 +215,14 @@ final class EventTapController {
             return Unmanaged.passRetained(event)
         }
 
-        let buttonNumber = event.getIntegerValueField(.mouseEventButtonNumber)
-        guard buttonNumber >= 3 else {
+        guard deviceMonitor.sawRecentPTTButtonEvent(isPressed: pressed, within: 0.08) else {
             return Unmanaged.passRetained(event)
         }
 
-        return deviceMonitor.sawRecentPTTButtonEvent(isPressed: pressed, within: 0.08)
-            ? nil
-            : Unmanaged.passRetained(event)
+        if pressed {
+            swallowedSideButtonPress = true
+        }
+        return nil
     }
 
     private static let eventTapCallback: CGEventTapCallBack = { _, type, event, userInfo in

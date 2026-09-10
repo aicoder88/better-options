@@ -84,7 +84,7 @@ final class AppCoordinator: NSObject {
     func releaseHeldControls() {
         holdingDeviceID = nil
         wheelCoalescer.reset()
-        gvoiceIntegration.releaseHeldChord()
+        gvoiceIntegration.releaseHold()
     }
 
     /// The Mac going to sleep or shutting down never sends a button release, so
@@ -229,9 +229,12 @@ final class AppCoordinator: NSObject {
                 return false
             }
             if sideButtonAction.isPushToTalk {
-                // Only takes the click while GVoice can actually answer it —
-                // otherwise let it through as the normal back-button click.
-                return self.gvoiceIntegration.runningPID != nil
+                // Only takes the click while GVoice has answered the socket and
+                // says it can record. Anything less and the click goes through
+                // as the ordinary back-button click it is printed with. This is
+                // a plain read of a flag kept up to date on this thread — never
+                // a question asked over the socket mid-click.
+                return self.gvoiceIntegration.isReady
             }
             return true
         }
@@ -269,7 +272,7 @@ final class AppCoordinator: NSObject {
         let action = settingsStore.action(for: trigger, deviceID: bindingDeviceID)
 
         if action.isPushToTalk {
-            guard gvoiceIntegration.runningPID != nil else {
+            guard gvoiceIntegration.isReady else {
                 return
             }
             gvoiceIntegration.togglePTT()
@@ -378,13 +381,13 @@ final class AppCoordinator: NSObject {
         }
 
         // A release always goes through, even if GVoice just quit or the
-        // remap was turned off mid-hold: otherwise the chord stays down.
-        guard gvoiceIntegration.runningPID != nil || !pressed else {
+        // remap was turned off mid-hold: otherwise the recording never ends.
+        guard gvoiceIntegration.isReady || !pressed else {
             return
         }
 
         holdingDeviceID = pressed ? bindingDeviceID : nil
-        gvoiceIntegration.dispatchPTTEvent(pressed: pressed, location: .zero)
+        gvoiceIntegration.dispatchPTTEvent(pressed: pressed)
     }
 
     /// The menu bar icon: a keyboard with a mouse beside it, overlapping.
@@ -538,12 +541,26 @@ final class AppCoordinator: NSObject {
         gvoiceItem?.title = gvoiceMenuTitle()
     }
 
+    /// One line saying whether the side button can dictate right now, and if
+    /// not, what is in the way.
     private func gvoiceMenuTitle() -> String {
-        switch gvoiceIntegration.installState {
-        case .installed:
-            return gvoiceIntegration.runningPID == nil ? "GVoice: installed, app not running" : "GVoice: ready"
-        case .notInstalled:
+        guard gvoiceIntegration.installState == .installed else {
             return "GVoice: not installed"
+        }
+        guard gvoiceIntegration.isRunning else {
+            return "GVoice: installed, app not running"
+        }
+
+        switch gvoiceIntegration.connectionState {
+        case .connected:
+            return gvoiceIntegration.isReady ? "GVoice: ready" : "GVoice: running, microphone not ready"
+        case .unavailable:
+            // GVoice is up but has no socket to talk on, which means a build
+            // from before the two apps started talking. The button falls back
+            // to being an ordinary back button until GVoice is updated.
+            return "GVoice: update needed for mouse dictation"
+        case .connecting, .idle:
+            return "GVoice: connecting…"
         }
     }
 
