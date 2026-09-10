@@ -9,6 +9,7 @@ import SwiftUI
 @MainActor
 final class SettingsWindowController: NSWindowController {
     private let viewModel: SettingsViewModel
+    private var refreshTimer: Timer?
 
     init(store: SettingsStore, deviceRegistry: DeviceRegistry) {
         let viewModel = SettingsViewModel(store: store, deviceRegistry: deviceRegistry)
@@ -43,5 +44,34 @@ final class SettingsWindowController: NSWindowController {
         NSApp.activate(ignoringOtherApps: true)
         showWindow(nil)
         window?.makeKeyAndOrderFront(nil)
+        watchForDeviceChanges()
+    }
+
+    /// Keeps the open window in step with what is plugged in.
+    ///
+    /// A mouse connected or unplugged while the window sits open used to leave
+    /// it showing a list that was already wrong, until it was closed and opened
+    /// again. It stops on its own once the window is out of sight.
+    private func watchForDeviceChanges() {
+        guard refreshTimer == nil else {
+            return
+        }
+
+        refreshTimer = Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] timer in
+            Task { @MainActor in
+                guard let self else {
+                    timer.invalidate()
+                    return
+                }
+
+                guard self.window?.isVisible == true else {
+                    timer.invalidate()
+                    self.refreshTimer = nil
+                    return
+                }
+
+                self.viewModel.refresh()
+            }
+        }
     }
 }

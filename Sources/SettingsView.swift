@@ -32,6 +32,11 @@ final class SettingsViewModel: ObservableObject {
     /// mouse, the function row on the keyboard.
     @Published private(set) var triggers: [Trigger] = Trigger.selectable
 
+    /// Whether the selected device has a thumb wheel to set up.
+    @Published private(set) var showsWheelOptions = true
+    @Published private(set) var wheelSensitivity = Settings.defaultWheelSensitivity
+    @Published private(set) var reverseWheel = false
+
     private let store: SettingsStore
     private let deviceRegistry: DeviceRegistry
 
@@ -41,16 +46,56 @@ final class SettingsViewModel: ObservableObject {
         refresh()
     }
 
-    /// Rereads the mouse list and the saved bindings. Called whenever the
-    /// window is opened, so a mouse plugged in while it was closed appears.
+    /// Rereads the mouse list and the saved bindings.
+    ///
+    /// Runs when the window opens and every couple of seconds while it is open,
+    /// so a mouse plugged in or unplugged in front of the window shows up
+    /// without it being closed and opened again. Nothing is written back unless
+    /// it actually changed, so an open picker is never yanked out from under a
+    /// hand.
     func refresh() {
-        devices = availableDevices()
+        let found = availableDevices()
+        if found != devices {
+            devices = found
+        }
 
         if !devices.contains(where: { $0.id == selectedDeviceID }) {
             selectedDeviceID = devices.first?.id ?? store.defaultDeviceID
         }
 
         reloadActions()
+    }
+
+    /// The name of the device being edited, for the reset warning.
+    var selectedDeviceName: String {
+        devices.first(where: { $0.id == selectedDeviceID })?.name ?? selectedDeviceID
+    }
+
+    /// A two-way link between the wheel sensitivity picker and the saved file.
+    var wheelSensitivitySelection: Binding<Int> {
+        Binding(
+            get: { [weak self] in self?.wheelSensitivity ?? Settings.defaultWheelSensitivity },
+            set: { [weak self] value in
+                self?.store.wheelSensitivity = value
+                self?.reloadActions()
+            }
+        )
+    }
+
+    /// A two-way link between the reverse-wheel switch and the saved file.
+    var reverseWheelSelection: Binding<Bool> {
+        Binding(
+            get: { [weak self] in self?.reverseWheel ?? false },
+            set: { [weak self] value in
+                self?.store.reverseWheel = value
+                self?.reloadActions()
+            }
+        )
+    }
+
+    /// How a sensitivity number reads in the picker.
+    func wheelSensitivityLabel(_ ticks: Int) -> String {
+        ticks == 1 ? "Every tick" : "Every \(ticks) ticks"
     }
 
     /// A two-way link between the mouse picker and this window.
@@ -105,13 +150,29 @@ final class SettingsViewModel: ObservableObject {
     }
 
     private func reloadActions() {
-        triggers = triggersForSelectedDevice()
+        let found = triggersForSelectedDevice()
+        if found != triggers {
+            triggers = found
+        }
 
         var actions: [Trigger: Action] = [:]
         for trigger in triggers {
             actions[trigger] = store.action(for: trigger, deviceID: selectedDeviceID)
         }
-        actionsByTrigger = actions
+        if actions != actionsByTrigger {
+            actionsByTrigger = actions
+        }
+
+        let hasWheel = triggers.contains(.thumbWheelLeft) || triggers.contains(.thumbWheelRight)
+        if hasWheel != showsWheelOptions {
+            showsWheelOptions = hasWheel
+        }
+        if store.wheelSensitivity != wheelSensitivity {
+            wheelSensitivity = store.wheelSensitivity
+        }
+        if store.reverseWheel != reverseWheel {
+            reverseWheel = store.reverseWheel
+        }
     }
 
     /// A device this app has never heard of can still hold bindings in the
@@ -157,6 +218,11 @@ struct SettingsView: View {
     @ObservedObject var viewModel: SettingsViewModel
     @State private var isConfirmingReset = false
 
+    /// Says which device is about to change, because only that one does now.
+    private var resetWarning: String {
+        "Only \(viewModel.selectedDeviceName) changes. Every other device keeps the bindings you gave it."
+    }
+
     var body: some View {
         Form {
             Section {
@@ -166,6 +232,18 @@ struct SettingsView: View {
                     }
                 }
                 .disabled(viewModel.devices.count < 2)
+            }
+
+            if viewModel.showsWheelOptions {
+                Section("Thumb wheel") {
+                    Picker("Wheel sensitivity", selection: viewModel.wheelSensitivitySelection) {
+                        ForEach(Settings.wheelSensitivityChoices, id: \.self) { ticks in
+                            Text(viewModel.wheelSensitivityLabel(ticks)).tag(ticks)
+                        }
+                    }
+
+                    Toggle("Reverse wheel", isOn: viewModel.reverseWheelSelection)
+                }
             }
 
             Section("What each control does") {
@@ -204,7 +282,7 @@ struct SettingsView: View {
             }
             Button("Cancel", role: .cancel) {}
         } message: {
-            Text("The wheel goes back to volume and the side button back to GVoice. Saved bindings for other mice are cleared too.")
+            Text(resetWarning)
         }
     }
 }

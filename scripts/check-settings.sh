@@ -13,6 +13,7 @@ swiftc -O \
     -o "$BUILD_DIR/settings-check" \
     "$ROOT_DIR/Sources/SettingsStore.swift" \
     "$ROOT_DIR/Sources/DeviceRegistry.swift" \
+    "$ROOT_DIR/Sources/WheelCoalescer.swift" \
     "$ROOT_DIR/scripts/settings-check/main.swift"
 
 "$BUILD_DIR/settings-check"

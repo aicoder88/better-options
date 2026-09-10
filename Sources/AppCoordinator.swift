@@ -13,6 +13,7 @@ final class AppCoordinator: NSObject {
     private let mediaKeySender = MediaKeySender()
     private let settingsStore = SettingsStore()
     private let volumeHUDController = VolumeHUDController()
+    private let wheelCoalescer = WheelCoalescer()
     private lazy var systemActionSender = SystemActionSender(mediaKeySender: mediaKeySender)
     private lazy var eventTapController = EventTapController(deviceMonitor: deviceMonitor)
     private lazy var settingsWindowController = SettingsWindowController(
@@ -34,6 +35,9 @@ final class AppCoordinator: NSObject {
     /// goes away.
     private var holdingDeviceID: String?
     private var systemObservers: [NSObjectProtocol] = []
+    /// A settings file that cannot be written says so once. Saying it on every
+    /// keystroke of a settings window would be worse than saying nothing.
+    private var hasReportedSaveFailure = false
 
     private var remappingEnabled = true {
         didSet {
@@ -79,6 +83,7 @@ final class AppCoordinator: NSObject {
     /// the app quitting.
     func releaseHeldControls() {
         holdingDeviceID = nil
+        wheelCoalescer.reset()
         gvoiceIntegration.releaseHeldChord()
     }
 
@@ -151,10 +156,31 @@ final class AppCoordinator: NSObject {
                 return
             }
 
-            // Which way the wheel default binds to volume up vs. down; any
-            // other action bound to that direction fires instead.
-            let trigger: Trigger = delta > 0 ? .thumbWheelRight : .thumbWheelLeft
-            self.fireMomentaryTrigger(trigger, deviceID: deviceID)
+            self.handleWheelTick(direction: delta > 0 ? .right : .left, deviceID: deviceID)
+        }
+
+        wheelCoalescer.scheduleFlush = { [weak self] in
+            // Long enough to gather one flick, short enough that the volume
+            // still moves the moment the wheel does.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.03) {
+                MainActor.assumeIsolated {
+                    self?.wheelCoalescer.flush()
+                }
+            }
+        }
+
+        wheelCoalescer.onBatch = { [weak self] batch in
+            MainActor.assumeIsolated {
+                self?.fireWheelBatch(batch)
+            }
+        }
+
+        settingsStore.onSaveFailure = { [weak self] message in
+            DispatchQueue.main.async {
+                MainActor.assumeIsolated {
+                    self?.reportSettingsSaveFailure(message)
+                }
+            }
         }
 
         deviceMonitor.onPTTButtonEvent = { [weak self] pressed, _, deviceID in
@@ -254,6 +280,85 @@ final class AppCoordinator: NSObject {
         if let volume = systemActionSender.perform(action) {
             volumeHUDController.show(volume: volume)
         }
+    }
+
+    /// One tick of the thumb wheel.
+    ///
+    /// Dictation is never held back for a moment: waiting for the flick to
+    /// finish would mean the microphone opening late. Everything else is
+    /// gathered up so one flick moves the volume once and draws the volume
+    /// window once.
+    private func handleWheelTick(direction: WheelCoalescer.Direction, deviceID: String) {
+        let trigger = wheelTrigger(for: direction)
+
+        if settingsStore.action(for: trigger, deviceID: deviceID).isPushToTalk {
+            wheelCoalescer.reset()
+            fireMomentaryTrigger(trigger, deviceID: deviceID)
+            return
+        }
+
+        wheelCoalescer.sensitivity = settingsStore.wheelSensitivity
+        wheelCoalescer.add(direction: direction, deviceID: deviceID)
+    }
+
+    /// Which saved binding a way of the wheel reads, with the swap applied.
+    private func wheelTrigger(for direction: WheelCoalescer.Direction) -> Trigger {
+        let swapped = settingsStore.reverseWheel
+
+        switch direction {
+        case .right:
+            return swapped ? .thumbWheelLeft : .thumbWheelRight
+        case .left:
+            return swapped ? .thumbWheelRight : .thumbWheelLeft
+        }
+    }
+
+    /// A whole flick of the wheel: the action fires once per step, and the
+    /// volume window is drawn once, showing where the volume ended up.
+    private func fireWheelBatch(_ batch: WheelCoalescer.Batch) {
+        let action = settingsStore.action(for: wheelTrigger(for: batch.direction), deviceID: batch.deviceID)
+
+        guard action.isSupported, !action.isPushToTalk else {
+            return
+        }
+
+        var volume: Float?
+        for _ in 0..<batch.steps {
+            volume = systemActionSender.perform(action) ?? volume
+        }
+
+        if let volume {
+            volumeHUDController.show(volume: volume)
+        }
+    }
+
+    /// The settings file could not be written.
+    ///
+    /// The store has already put memory back to what is on disk, so the menu is
+    /// rebuilt to match it and the person is told once, plainly, that the change
+    /// did not stick.
+    private func reportSettingsSaveFailure(_ message: String) {
+        if remappingEnabled != settingsStore.isEnabled {
+            remappingEnabled = settingsStore.isEnabled
+        }
+        updateMenu()
+
+        guard !hasReportedSaveFailure else {
+            return
+        }
+        hasReportedSaveFailure = true
+
+        let alert = NSAlert()
+        alert.alertStyle = .warning
+        alert.messageText = "Better Options could not save your settings"
+        alert.informativeText = """
+        Your change was undone, because it could not be written to \
+        \(settingsStore.fileURL.path).
+
+        \(message)
+        """
+        alert.addButton(withTitle: "OK")
+        alert.runModal()
     }
 
     /// Fires whatever the side button is bound to. GVoice PTT holds for

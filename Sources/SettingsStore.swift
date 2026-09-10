@@ -261,23 +261,98 @@ struct TriggerBinding: Hashable, Codable {
 }
 
 /// Everything the settings file holds.
+///
+/// The two thumb-wheel preferences are written out only once they are moved off
+/// the value every earlier build behaved as. A file saved before they existed
+/// therefore still comes back byte for byte the same.
 struct Settings: Hashable, Codable {
     static let currentVersion = 1
+    /// One step per tick: what the wheel has always done.
+    static let defaultWheelSensitivity = 1
+    static let wheelSensitivityChoices = [1, 2, 3, 4, 5]
 
     var bindings: [TriggerBinding]
     var enabled: Bool
     var version: Int
+    /// How many wheel ticks it takes to fire the wheel's action once.
+    var wheelSensitivity: Int
+    /// Swaps which way of the wheel counts as left and which as right.
+    var reverseWheel: Bool
+
+    init(
+        bindings: [TriggerBinding],
+        enabled: Bool,
+        version: Int,
+        wheelSensitivity: Int = Settings.defaultWheelSensitivity,
+        reverseWheel: Bool = false
+    ) {
+        self.bindings = bindings
+        self.enabled = enabled
+        self.version = version
+        self.wheelSensitivity = Settings.clampedWheelSensitivity(wheelSensitivity)
+        self.reverseWheel = reverseWheel
+    }
+
+    /// A number outside the range the window offers would make the wheel either
+    /// fire nothing at all or fire on a tick that never comes.
+    static func clampedWheelSensitivity(_ value: Int) -> Int {
+        guard let lowest = wheelSensitivityChoices.first, let highest = wheelSensitivityChoices.last else {
+            return defaultWheelSensitivity
+        }
+
+        return min(max(value, lowest), highest)
+    }
 
     static func defaults(deviceID: String) -> Settings {
         Settings(
-            bindings: [
-                TriggerBinding(deviceID: deviceID, trigger: .thumbWheelLeft, action: .volumeUp),
-                TriggerBinding(deviceID: deviceID, trigger: .thumbWheelRight, action: .volumeDown),
-                TriggerBinding(deviceID: deviceID, trigger: .sideButton, action: .gvoicePTT),
-            ],
+            bindings: defaultBindings(deviceID: deviceID),
             enabled: true,
             version: currentVersion
         )
+    }
+
+    /// What one mouse's controls do on a fresh install.
+    static func defaultBindings(deviceID: String) -> [TriggerBinding] {
+        [
+            TriggerBinding(deviceID: deviceID, trigger: .thumbWheelLeft, action: .volumeUp),
+            TriggerBinding(deviceID: deviceID, trigger: .thumbWheelRight, action: .volumeDown),
+            TriggerBinding(deviceID: deviceID, trigger: .sideButton, action: .gvoicePTT),
+        ]
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case bindings
+        case enabled
+        case version
+        case wheelSensitivity
+        case reverseWheel
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        bindings = try container.decode([TriggerBinding].self, forKey: .bindings)
+        enabled = try container.decode(Bool.self, forKey: .enabled)
+        version = try container.decode(Int.self, forKey: .version)
+        wheelSensitivity = Settings.clampedWheelSensitivity(
+            try container.decodeIfPresent(Int.self, forKey: .wheelSensitivity) ?? Settings.defaultWheelSensitivity
+        )
+        reverseWheel = try container.decodeIfPresent(Bool.self, forKey: .reverseWheel) ?? false
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(bindings, forKey: .bindings)
+        try container.encode(enabled, forKey: .enabled)
+        try container.encode(version, forKey: .version)
+
+        // Left out while they say what every build before them did, so a file
+        // written by an older build is not rewritten just for being opened.
+        if wheelSensitivity != Settings.defaultWheelSensitivity {
+            try container.encode(wheelSensitivity, forKey: .wheelSensitivity)
+        }
+        if reverseWheel {
+            try container.encode(reverseWheel, forKey: .reverseWheel)
+        }
     }
 }
 
@@ -303,8 +378,16 @@ final class SettingsStore {
 
     private(set) var settings: Settings
 
+    /// The last copy known to be on disk. A write that fails puts this back, so
+    /// the app never behaves one way while the file says another.
+    private var lastSavedSettings: Settings
+
     /// Fires after any change that has been written to disk.
     var onChange: (() -> Void)?
+
+    /// Fires when a change could not be written. A change that vanishes with
+    /// nothing said is the whole reason this exists.
+    var onSaveFailure: ((String) -> Void)?
 
     init(
         fileURL: URL = SettingsStore.defaultFileURL,
@@ -315,6 +398,7 @@ final class SettingsStore {
         self.defaultDeviceID = defaultDeviceID
         self.defaultKeyboardID = defaultKeyboardID
         self.settings = Settings.defaults(deviceID: defaultDeviceID)
+        self.lastSavedSettings = self.settings
     }
 
     /// Loads the file if it is there. A missing or unreadable file leaves the
@@ -328,6 +412,7 @@ final class SettingsStore {
         }
 
         settings = loaded
+        lastSavedSettings = loaded
         return true
     }
 
@@ -341,6 +426,7 @@ final class SettingsStore {
             withIntermediateDirectories: true
         )
         try data.write(to: fileURL, options: .atomic)
+        lastSavedSettings = settings
     }
 
     var isEnabled: Bool {
@@ -373,8 +459,47 @@ final class SettingsStore {
         persist()
     }
 
+    /// How many wheel ticks one action takes.
+    var wheelSensitivity: Int {
+        get { settings.wheelSensitivity }
+        set {
+            let wanted = Settings.clampedWheelSensitivity(newValue)
+            guard settings.wheelSensitivity != wanted else {
+                return
+            }
+            settings.wheelSensitivity = wanted
+            persist()
+        }
+    }
+
+    /// Whether the two ways of the wheel are swapped.
+    var reverseWheel: Bool {
+        get { settings.reverseWheel }
+        set {
+            guard settings.reverseWheel != newValue else {
+                return
+            }
+            settings.reverseWheel = newValue
+            persist()
+        }
+    }
+
+    /// Puts one device's controls back to what a fresh install would do, and
+    /// leaves every other device's bindings exactly where they were.
+    ///
+    /// A mouse gets the wheel back on volume and the side button back on
+    /// dictation. A keyboard gets Pass Through: a key nobody has bound is
+    /// already left alone, so its bindings are simply dropped.
     func resetToDefaults(deviceID: String? = nil) {
-        settings = Settings.defaults(deviceID: deviceID ?? defaultDeviceID)
+        let id = deviceID ?? defaultDeviceID
+        let type = KnownDevice.all.first(where: { $0.id == id })?.type ?? .mouse
+
+        settings.bindings.removeAll { $0.deviceID == id }
+
+        if type == .mouse {
+            settings.bindings.append(contentsOf: Settings.defaultBindings(deviceID: id))
+        }
+
         persist()
     }
 
@@ -385,6 +510,10 @@ final class SettingsStore {
             // A change that cannot be written would otherwise vanish at quit
             // with nothing to show for it.
             NSLog("Better Options could not save settings to %@: %@", fileURL.path, String(describing: error))
+            settings = lastSavedSettings
+            onSaveFailure?(String(describing: error))
+            onChange?()
+            return
         }
 
         onChange?()

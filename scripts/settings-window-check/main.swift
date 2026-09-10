@@ -137,6 +137,26 @@ func runChecks() throws {
     expect(afterReset.load(), "the file loads after the reset")
     expectEqual(afterReset.action(for: .sideButton, deviceID: "mx-master-3"), .gvoicePTT, "the reset was written too")
 
+    print("The thumb wheel rows")
+    expect(restartedViewModel.showsWheelOptions, "a mouse gets the wheel rows")
+    expectEqual(restartedViewModel.wheelSensitivity, 1, "the wheel starts on every tick")
+    expectEqual(restartedViewModel.wheelSensitivityLabel(1), "Every tick", "which reads plainly")
+    expectEqual(restartedViewModel.wheelSensitivityLabel(3), "Every 3 ticks", "and so does a slower one")
+    expect(!restartedViewModel.reverseWheel, "and is not reversed")
+
+    restartedViewModel.wheelSensitivitySelection.wrappedValue = 3
+    restartedViewModel.reverseWheelSelection.wrappedValue = true
+    expectEqual(restartedViewModel.wheelSensitivity, 3, "picking three ticks shows three ticks")
+    expect(restartedViewModel.reverseWheel, "and the switch stays where it was put")
+
+    let afterWheel = SettingsStore(fileURL: settingsFile)
+    expect(afterWheel.load(), "the file loads after both were changed")
+    expectEqual(afterWheel.wheelSensitivity, 3, "three ticks was written, with no Save button pressed")
+    expect(afterWheel.reverseWheel, "and so was reversed")
+
+    restartedViewModel.wheelSensitivitySelection.wrappedValue = 1
+    restartedViewModel.reverseWheelSelection.wrappedValue = false
+
     print("A mouse that is not plugged in")
     let unpluggedStore = SettingsStore(fileURL: settingsFile)
     expect(unpluggedStore.load(), "loads")

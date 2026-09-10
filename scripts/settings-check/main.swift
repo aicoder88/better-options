@@ -262,6 +262,159 @@ do {
     expectEqual(registry.activeKeyboard?.id ?? "", "mx-keys-s", "and the keyboard is still the keyboard")
 }
 
+// Resetting one device used to throw away every other device's bindings along
+// with it, because it replaced the whole file with a fresh set of defaults.
+print("Resetting one device leaves the others alone")
+do {
+    let twoDevices = """
+    {"bindings":[\
+    {"action":"mediaPlayPause","deviceID":"mx-master-3","trigger":{"sideButton":{}}},\
+    {"action":"passthrough","deviceID":"mx-master-3","trigger":{"thumbWheelLeft":{}}},\
+    {"action":"volumeMute","deviceID":"mx-anywhere-3","trigger":{"sideButton":{}}},\
+    {"action":"mediaNext","deviceID":"mx-keys-s","trigger":{"consumerKey":{"usage":181}}}\
+    ],"enabled":true,"version":1}
+    """
+    let copy = try workingCopy(of: Data(twoDevices.utf8))
+    let store = SettingsStore(fileURL: copy)
+    expect(store.load(), "a file with two mice and a keyboard loads")
+
+    store.resetToDefaults(deviceID: "mx-master-3")
+
+    expectEqual(store.action(for: .sideButton, deviceID: "mx-master-3"), .gvoicePTT, "the reset mouse gets dictation back")
+    expectEqual(store.action(for: .thumbWheelLeft, deviceID: "mx-master-3"), .volumeUp, "and its wheel back on volume")
+    expectEqual(store.action(for: .sideButton, deviceID: "mx-anywhere-3"), .toggleMute, "the other mouse is untouched")
+    expectEqual(store.action(for: .consumerKey(0xB5), deviceID: "mx-keys-s"), .nextTrack, "the keyboard is untouched")
+
+    let reopened = SettingsStore(fileURL: copy)
+    expect(reopened.load(), "the reset was written")
+    expectEqual(reopened.action(for: .sideButton, deviceID: "mx-anywhere-3"), .toggleMute, "and the other mouse is still untouched on disk")
+}
+
+// A keyboard has no defaults of its own: its keys go back to doing what they
+// are printed with, which is a key nobody has bound.
+print("Resetting a keyboard gives its keys back")
+do {
+    let withKeyboard = """
+    {"bindings":[\
+    {"action":"volumeMute","deviceID":"mx-keys-s","trigger":{"consumerKey":{"usage":226}}},\
+    {"action":"mediaNext","deviceID":"mx-keys-s","trigger":{"consumerKey":{"usage":181}}},\
+    {"action":"mediaPlayPause","deviceID":"mx-master-3","trigger":{"sideButton":{}}}\
+    ],"enabled":false,"version":1}
+    """
+    let copy = try workingCopy(of: Data(withKeyboard.utf8))
+    let store = SettingsStore(fileURL: copy)
+    expect(store.load(), "loads")
+
+    store.resetToDefaults(deviceID: "mx-keys-s")
+
+    expectEqual(store.action(for: .consumerKey(0xE2), deviceID: "mx-keys-s"), .passThrough, "the mute key is left alone again")
+    expectEqual(store.action(for: .consumerKey(0xB5), deviceID: "mx-keys-s"), .passThrough, "and so is the next-track key")
+    expectEqual(store.action(for: .sideButton, deviceID: "mx-master-3"), .playPause, "the mouse is untouched")
+    expect(!store.isEnabled, "remapping stays switched off")
+}
+
+// The wheel's two new settings are written only once they are moved off what
+// the wheel has always done, so an older file is not rewritten just for being
+// opened.
+print("Thumb wheel settings")
+do {
+    let copy = try workingCopy(of: Data(recoveredSettingsJSON.utf8))
+    let store = SettingsStore(fileURL: copy)
+    expect(store.load(), "loads")
+    expectEqual(store.wheelSensitivity, 1, "the wheel acts on every tick")
+    expect(!store.reverseWheel, "and is not reversed")
+
+    store.wheelSensitivity = 3
+    store.reverseWheel = true
+
+    let reopened = SettingsStore(fileURL: copy)
+    expect(reopened.load(), "loads again after both were changed")
+    expectEqual(reopened.wheelSensitivity, 3, "three ticks per step was saved")
+    expect(reopened.reverseWheel, "reversed was saved")
+
+    store.wheelSensitivity = 1
+    store.reverseWheel = false
+    expectEqual(try Data(contentsOf: copy), Data(recoveredSettingsJSON.utf8), "putting both back leaves the file exactly as it was")
+
+    store.wheelSensitivity = 99
+    expectEqual(store.wheelSensitivity, 5, "a number past the end is pulled back to the highest offered")
+    store.wheelSensitivity = 0
+    expectEqual(store.wheelSensitivity, 1, "and a number below the start to the lowest")
+}
+
+// A change that cannot be written used to vanish at quit with nothing said.
+print("A settings file that cannot be written")
+do {
+    let blocked = scratch.appendingPathComponent("blocked", isDirectory: false)
+    try Data("not a folder".utf8).write(to: blocked)
+    let unwritable = blocked.appendingPathComponent("settings.json")
+
+    let store = SettingsStore(fileURL: unwritable)
+    var reported = 0
+    store.onSaveFailure = { _ in reported += 1 }
+
+    expect(!store.load(), "there is nothing to load")
+    store.setAction(.toggleMute, for: .sideButton, deviceID: "mx-master-3")
+
+    expectEqual(reported, 1, "the failed write is reported once")
+    expectEqual(store.action(for: .sideButton, deviceID: "mx-master-3"), .gvoicePTT, "and the change is undone rather than left only in memory")
+    expect(!FileManager.default.fileExists(atPath: unwritable.path), "nothing was written")
+}
+
+// One flick of the wheel should move the volume once, not once per tick — but
+// a flick the other way must never be swallowed into the flick before it.
+print("Gathering up a flick of the wheel")
+do {
+    let coalescer = WheelCoalescer()
+    var batches: [WheelCoalescer.Batch] = []
+    coalescer.onBatch = { batches.append($0) }
+
+    for _ in 0..<5 {
+        coalescer.add(direction: .right, deviceID: "mx-master-3")
+    }
+    expect(batches.isEmpty, "nothing fires while the flick is still going")
+    coalescer.flush()
+    expectEqual(batches.count, 1, "the whole flick is handed over at once")
+    expectEqual(batches.first?.steps ?? 0, 5, "and every tick still counts")
+
+    batches.removeAll()
+    coalescer.add(direction: .right, deviceID: "mx-master-3")
+    coalescer.add(direction: .left, deviceID: "mx-master-3")
+    expectEqual(batches.count, 1, "turning the wheel the other way hands over what was waiting")
+    expectEqual(batches.first?.direction ?? .left, .right, "and hands over the way it was going first")
+    coalescer.flush()
+    expectEqual(batches.count, 2, "then the new direction")
+    expectEqual(batches.last?.direction ?? .right, .left, "which is the other way")
+
+    batches.removeAll()
+    coalescer.add(direction: .right, deviceID: "mx-master-3")
+    coalescer.add(direction: .right, deviceID: "mx-anywhere-3")
+    expectEqual(batches.count, 1, "a second mouse does not join the first one's flick")
+    expectEqual(batches.first?.deviceID ?? "", "mx-master-3", "the first mouse's flick is the one handed over")
+
+    batches.removeAll()
+    coalescer.reset()
+    coalescer.sensitivity = 3
+    coalescer.add(direction: .right, deviceID: "mx-master-3")
+    coalescer.add(direction: .right, deviceID: "mx-master-3")
+    coalescer.flush()
+    expect(batches.isEmpty, "two ticks are not a step when three are needed")
+    coalescer.add(direction: .right, deviceID: "mx-master-3")
+    coalescer.flush()
+    expectEqual(batches.count, 1, "the third tick finishes the step")
+    expectEqual(batches.first?.steps ?? 0, 1, "one step, not three")
+
+    batches.removeAll()
+    coalescer.reset()
+    coalescer.add(direction: .right, deviceID: "mx-master-3")
+    coalescer.add(direction: .left, deviceID: "mx-master-3")
+    coalescer.add(direction: .left, deviceID: "mx-master-3")
+    coalescer.add(direction: .left, deviceID: "mx-master-3")
+    coalescer.flush()
+    expectEqual(batches.count, 1, "a part-finished step one way never adds to a flick the other way")
+    expectEqual(batches.first?.direction ?? .right, .left, "only the completed flick fires")
+}
+
 if failures.isEmpty {
     print("\nAll checks passed.")
 } else {
