@@ -34,7 +34,15 @@ open dist/BetterOptions.app
 
 This installs `BetterOptions.app` to `/Applications` and registers a launch agent so it starts at login.
 
-> **Note:** Installing a new build changes the ad-hoc code signature. After reinstalling, go to **System Settings → Privacy & Security** and re-enable **Accessibility** and **Input Monitoring** for Better Options — macOS revokes these permissions when the binary changes.
+> **Note:** Builds are signed with a fixed local identity ("Better Options Local
+> Signing", created 2026-09-12), so **Accessibility** and **Input Monitoring** now
+> survive a reinstall. Before that, every build was ad-hoc signed, got a new
+> signature, and macOS silently revoked both permissions — on 2026-09-10 that
+> killed the thumb wheel for two days with the switches still showing as on.
+>
+> If `security find-identity -v -p codesigning` no longer lists that identity,
+> the build script falls back to ad-hoc and prints a warning; then the
+> permissions do have to be granted again, as described under Troubleshooting.
 
 ## Requirements
 
