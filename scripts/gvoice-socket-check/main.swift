@@ -19,6 +19,9 @@ final class FakeGVoice {
     private let lock = NSLock()
     private var seen: [String] = []
     private let readyToRecord = true
+    /// Refuse the next stop instead of acking it, the way the real GVoice does
+    /// for a press it no longer holds.
+    private var refuseTheNextStop = false
 
     init(path: String) {
         self.path = path
@@ -28,6 +31,20 @@ final class FakeGVoice {
         lock.lock()
         defer { lock.unlock() }
         return seen
+    }
+
+    /// How many of one kind of message have arrived. The list only grows, so a
+    /// second press has to be counted, not looked for.
+    func count(of type: String) -> Int {
+        lock.lock()
+        defer { lock.unlock() }
+        return seen.filter { $0 == type }.count
+    }
+
+    func refuseNextStop() {
+        lock.lock()
+        refuseTheNextStop = true
+        lock.unlock()
     }
 
     func start() throws {
@@ -127,6 +144,11 @@ final class FakeGVoice {
         lock.lock()
         seen.append(type)
         let ready = readyToRecord
+        var refuseThisOne = false
+        if (type == "stop" || type == "cancel"), refuseTheNextStop {
+            refuseThisOne = true
+            refuseTheNextStop = false
+        }
         lock.unlock()
 
         let requestID = (object["requestId"] as? String) ?? ""
@@ -137,7 +159,11 @@ final class FakeGVoice {
         case "start":
             send(#"{"type":"ack","requestId":"\#(requestID)","sessionId":"session-1"}"#, to: fd)
         case "stop", "cancel":
-            send(#"{"type":"ack","requestId":"\#(requestID)","sessionId":"session-1"}"#, to: fd)
+            if refuseThisOne {
+                send(#"{"type":"refuse","requestId":"\#(requestID)","reason":"session"}"#, to: fd)
+            } else {
+                send(#"{"type":"ack","requestId":"\#(requestID)","sessionId":"session-1"}"#, to: fd)
+            }
         default:
             break
         }
@@ -214,6 +240,20 @@ do {
     // The heartbeat is what stops GVoice ending a recording on its own.
     try waitFor("a heartbeat", timeout: 5) { server.received.contains("heartbeat") }
     try check(true, "kept the heartbeat going")
+
+    // GVoice refuses the stop, because the press it names is already over: a
+    // release that lost its race, or a stop sent twice. That refusal is about
+    // that one message and nothing else. Hanging up on GVoice for it — which is
+    // what used to happen — took the side button out of service until GVoice was
+    // restarted.
+    server.refuseNextStop()
+    integration.dispatchPTTEvent(pressed: true)
+    try waitFor("a second recording") { server.count(of: "start") == 2 }
+    integration.dispatchPTTEvent(pressed: false)
+    try waitFor("the refused stop") { server.count(of: "stop") == 2 }
+    try waitFor("the press to end anyway") { !integration.isHolding }
+    try check(integration.isReady, "a refused stop leaves dictation on offer")
+    try check(integration.connectionState == .connected, "and does not hang up on GVoice")
 
     // GVoice quits mid-conversation.
     server.hangUp()

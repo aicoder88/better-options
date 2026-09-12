@@ -342,12 +342,30 @@ final class GVoiceIntegration {
 
     private func handleRefusal(_ object: [String: Any]) {
         let reason = (object["reason"] as? String) ?? "unknown"
+        let requestID = object["requestId"] as? String
 
-        if case .starting(let requestID, _) = holdState,
-           (object["requestId"] as? String) == requestID {
+        if case .starting(let pressID, _) = holdState, requestID == pressID {
             Self.log.info("GVoice refused the press: \(reason, privacy: .public)")
             holdState = .idle
             onStateChange?()
+            return
+        }
+
+        // Any other refusal that NAMES one of our requests is about that one
+        // request and nothing more — GVoice carries a requestId on every answer
+        // to a message we sent, and leaves it off only when the refusal is about
+        // the connection itself. Hanging up here is what this used to do, and it
+        // is the wrong answer to the commonest case: GVoice now refuses a stop
+        // for a press it no longer holds (a release that lost its race, a stop
+        // we sent twice), which would have taken the mouse button out of service
+        // until GVoice was restarted. The press is over either way, so match the
+        // state to that and stay connected.
+        if requestID != nil {
+            Self.log.info("GVoice refused \(requestID ?? "", privacy: .public): \(reason, privacy: .public)")
+            if case .holding = holdState {
+                holdState = .idle
+                onStateChange?()
+            }
             return
         }
 
