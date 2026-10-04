@@ -9,7 +9,7 @@ final class AppCoordinator: NSObject {
 
     private let deviceMonitor = HIDDeviceMonitor()
     private let deviceRegistry = DeviceRegistry()
-    private let gvoiceIntegration = GVoiceIntegration()
+    private let handy = HandyIntegration()
     private let mediaKeySender = MediaKeySender()
     private let settingsStore = SettingsStore()
     private let volumeHUDController = VolumeHUDController()
@@ -26,7 +26,7 @@ final class AppCoordinator: NSObject {
     private var deviceStatusItem: NSMenuItem?
     private var remapToggleItem: NSMenuItem?
     private var permissionsItem: NSMenuItem?
-    private var gvoiceItem: NSMenuItem?
+    private var handyItem: NSMenuItem?
     private var volumePreviewItem: NSMenuItem?
     private var accessibilitySettingsItem: NSMenuItem?
     private var accessibilityPollingTimer: Timer?
@@ -67,7 +67,7 @@ final class AppCoordinator: NSObject {
         remappingEnabled = settingsStore.isEnabled
         eventTapController.isEnabled = remappingEnabled
 
-        gvoiceIntegration.refreshConfiguration()
+        handy.refreshConfiguration()
         deviceMonitor.start()
         requestAccessibilityPermissionsIfNeeded()
         eventTapController.start()
@@ -77,14 +77,14 @@ final class AppCoordinator: NSObject {
 
     /// Lets go of anything being held down — dictation above all.
     ///
-    /// A hold that is never released leaves GVoice recording with nothing left
+    /// A hold that is never released leaves Handy recording with nothing left
     /// to stop it, so every way out of a hold ends here: the mouse unplugged,
     /// the binding changed, remapping switched off, the Mac going to sleep,
     /// the app quitting.
     func releaseHeldControls() {
         holdingDeviceID = nil
         wheelCoalescer.reset()
-        gvoiceIntegration.releaseHold()
+        handy.releaseHold()
     }
 
     /// The Mac going to sleep or shutting down never sends a button release, so
@@ -111,7 +111,7 @@ final class AppCoordinator: NSObject {
     /// The device that started a hold has been unplugged: nothing is ever going
     /// to send the release, so send it here.
     private func releaseHeldControlsIfDeviceGone() {
-        guard gvoiceIntegration.isHolding else {
+        guard handy.isHolding else {
             return
         }
 
@@ -126,7 +126,7 @@ final class AppCoordinator: NSObject {
     /// The control being held has just been pointed at something else, so the
     /// release that was coming would go to the new action instead.
     private func releaseHeldControlsIfUnbound() {
-        guard gvoiceIntegration.isHolding, let holdingDeviceID else {
+        guard handy.isHolding, let holdingDeviceID else {
             return
         }
 
@@ -229,12 +229,9 @@ final class AppCoordinator: NSObject {
                 return false
             }
             if sideButtonAction.isPushToTalk {
-                // Only takes the click while GVoice has answered the socket and
-                // says it can record. Anything less and the click goes through
-                // as the ordinary back-button click it is printed with. This is
-                // a plain read of a flag kept up to date on this thread — never
-                // a question asked over the socket mid-click.
-                return self.gvoiceIntegration.isReady
+                // Only takes the click while Handy is open. Otherwise the click
+                // goes through as the ordinary back-button click it is printed with.
+                return self.handy.isReady
             }
             return true
         }
@@ -243,7 +240,7 @@ final class AppCoordinator: NSObject {
             self?.updateMenu()
         }
 
-        gvoiceIntegration.onStateChange = { [weak self] in
+        handy.onStateChange = { [weak self] in
             self?.updateMenu()
         }
     }
@@ -265,18 +262,18 @@ final class AppCoordinator: NSObject {
     }
 
     /// Fires whatever a tap-like control is bound to — a wheel tick or a key
-    /// on the function row. GVoice PTT toggles here instead of holding, since
+    /// on the function row. Handy PTT toggles here instead of holding, since
     /// a tap has no separate release to end the hold on.
     private func fireMomentaryTrigger(_ trigger: Trigger, deviceID: String? = nil) {
         let bindingDeviceID = deviceID ?? currentDeviceID()
         let action = settingsStore.action(for: trigger, deviceID: bindingDeviceID)
 
         if action.isPushToTalk {
-            guard gvoiceIntegration.isReady else {
+            guard handy.isReady else {
                 return
             }
-            gvoiceIntegration.togglePTT()
-            holdingDeviceID = gvoiceIntegration.isHolding ? bindingDeviceID : nil
+            handy.togglePTT()
+            holdingDeviceID = handy.isHolding ? bindingDeviceID : nil
             return
         }
 
@@ -364,7 +361,7 @@ final class AppCoordinator: NSObject {
         alert.runModal()
     }
 
-    /// Fires whatever the side button is bound to. GVoice PTT holds for
+    /// Fires whatever the side button is bound to. Handy PTT holds for
     /// exactly as long as the button is down, same as it always has; any
     /// other action fires once, on press.
     private func fireSideButton(pressed: Bool, deviceID: String) {
@@ -380,14 +377,14 @@ final class AppCoordinator: NSObject {
             return
         }
 
-        // A release always goes through, even if GVoice just quit or the
+        // A release always goes through, even if Handy just quit or the
         // remap was turned off mid-hold: otherwise the recording never ends.
-        guard gvoiceIntegration.isReady || !pressed else {
+        guard handy.isReady || !pressed else {
             return
         }
 
         holdingDeviceID = pressed ? bindingDeviceID : nil
-        gvoiceIntegration.dispatchPTTEvent(pressed: pressed)
+        handy.dispatchPTTEvent(pressed: pressed)
     }
 
     /// The menu bar icon: a keyboard with a mouse beside it, overlapping.
@@ -469,10 +466,10 @@ final class AppCoordinator: NSObject {
         menu.addItem(permissionsItem)
         self.permissionsItem = permissionsItem
 
-        let gvoiceItem = NSMenuItem(title: "", action: #selector(refreshGVoiceStatus), keyEquivalent: "")
-        gvoiceItem.target = self
-        menu.addItem(gvoiceItem)
-        self.gvoiceItem = gvoiceItem
+        let handyItem = NSMenuItem(title: "", action: #selector(refreshHandyStatus), keyEquivalent: "")
+        handyItem.target = self
+        menu.addItem(handyItem)
+        self.handyItem = handyItem
 
         let volumePreviewItem = NSMenuItem(title: "Show Volume HUD", action: #selector(showVolumeHUDPreview), keyEquivalent: "")
         volumePreviewItem.target = self
@@ -538,30 +535,13 @@ final class AppCoordinator: NSObject {
             accessibilitySettingsItem?.isHidden = false
         }
 
-        gvoiceItem?.title = gvoiceMenuTitle()
+        handyItem?.title = handyMenuTitle()
     }
 
     /// One line saying whether the side button can dictate right now, and if
     /// not, what is in the way.
-    private func gvoiceMenuTitle() -> String {
-        guard gvoiceIntegration.installState == .installed else {
-            return "GVoice: not installed"
-        }
-        guard gvoiceIntegration.isRunning else {
-            return "GVoice: installed, app not running"
-        }
-
-        switch gvoiceIntegration.connectionState {
-        case .connected:
-            return gvoiceIntegration.isReady ? "GVoice: ready" : "GVoice: running, microphone not ready"
-        case .unavailable:
-            // GVoice is up but has no socket to talk on, which means a build
-            // from before the two apps started talking. The button falls back
-            // to being an ordinary back button until GVoice is updated.
-            return "GVoice: update needed for mouse dictation"
-        case .connecting, .idle:
-            return "GVoice: connecting…"
-        }
+    private func handyMenuTitle() -> String {
+        handy.isRunning ? "Handy: ready" : "Handy: not running"
     }
 
     /// Keeps the list the settings window offers in step with what is plugged
@@ -665,8 +645,8 @@ final class AppCoordinator: NSObject {
     }
 
     @objc
-    private func refreshGVoiceStatus() {
-        gvoiceIntegration.refreshConfiguration()
+    private func refreshHandyStatus() {
+        handy.refreshConfiguration()
         updateMenu()
     }
 

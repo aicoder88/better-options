@@ -3,7 +3,7 @@
 Better Options is a small macOS menu bar app for remapping an `MX Master 3` / `MX Master 3 Mac`:
 
 - Thumb wheel left/right -> system volume down/up
-- Back side button -> GVoice hold-to-talk dictation
+- Back side button -> Handy hold-to-talk dictation
 
 ## Run
 
@@ -49,7 +49,7 @@ This installs `BetterOptions.app` to `/Applications` and registers a launch agen
 - macOS 13+
 - **Accessibility** permission for `Better Options` (the app prompts for this automatically on launch)
 - **Input Monitoring** permission (required for reading HID events from the mouse)
-- GVoice installed if you want the hold-to-talk remap
+- Handy installed and running if you want the hold-to-talk remap
 
 ## Troubleshooting permissions
 
@@ -70,6 +70,6 @@ Then go to **System Settings → Privacy & Security** and re-enable both **Acces
 ## Notes
 
 - Remapping only activates when a matching MX Master 3 device is connected.
-- Holding the Back button asks GVoice to record, over a local socket in GVoice's own folder (`~/Library/Application Support/GVoice/control/gvoice.sock`). No keys are faked any more: Better Options says "start" when the button goes down and "stop" when it comes up, and GVoice ends the recording by itself if Better Options stops answering. Set `BETTEROPTIONS_GVOICE_SOCKET` to talk to a GVoice running on its own data folder instead.
+- Holding the Back button starts Handy recording; letting go stops it. Better Options sends Handy the same signal as `handy --toggle-transcription` (SIGUSR2) on press and again on release. No keys are faked, so Handy's own keyboard shortcut (Option+Space) keeps working on its own.
 - Better Options swallows the raw Back button so holding it doesn't also fire browser-back while you dictate.
-- If GVoice is not running, or is a build with no socket to talk on, the Back button falls through to normal behavior and the menu says which it is.
+- If Handy is not running, the Back button falls through to normal behavior and the menu says "Handy: not running".

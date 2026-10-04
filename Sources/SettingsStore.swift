@@ -185,7 +185,7 @@ struct Action: RawRepresentable, Hashable, Codable {
     static let playPause = Action(rawValue: "mediaPlayPause")
     static let previousTrack = Action(rawValue: "mediaPrevious")
     static let nextTrack = Action(rawValue: "mediaNext")
-    static let gvoicePTT = Action(rawValue: "gvoicePTT")
+    static let handyPTT = Action(rawValue: "handyPTT")
 
     /// The choices the settings window offers, in the order it shows them.
     static let selectable: [Action] = [
@@ -198,14 +198,14 @@ struct Action: RawRepresentable, Hashable, Codable {
         .playPause,
         .previousTrack,
         .nextTrack,
-        .gvoicePTT,
+        .handyPTT,
     ]
 
     /// Whether this means hold-to-talk dictation.
     ///
-    /// Matches on the ending rather than a fixed list, so the name 0.2 saved
-    /// for the dictation app that came before GVoice still starts dictation
-    /// without that app's name having to appear anywhere in this build.
+    /// Matches on the ending rather than a fixed list, so names saved for the
+    /// dictation apps that came before Handy (GVoice and earlier) still start
+    /// dictation.
     var isPushToTalk: Bool {
         rawValue.hasSuffix("PTT")
     }
@@ -235,7 +235,7 @@ struct Action: RawRepresentable, Hashable, Codable {
         case .playPause: return "Play / Pause"
         case .previousTrack: return "Previous Track"
         case .nextTrack: return "Next Track"
-        case .gvoicePTT: return "GVoice PTT"
+        case .handyPTT: return "Handy Push-to-Talk"
         default: return rawValue
         }
     }
@@ -316,7 +316,7 @@ struct Settings: Hashable, Codable {
         [
             TriggerBinding(deviceID: deviceID, trigger: .thumbWheelLeft, action: .volumeUp),
             TriggerBinding(deviceID: deviceID, trigger: .thumbWheelRight, action: .volumeDown),
-            TriggerBinding(deviceID: deviceID, trigger: .sideButton, action: .gvoicePTT),
+            TriggerBinding(deviceID: deviceID, trigger: .sideButton, action: .handyPTT),
         ]
     }
 

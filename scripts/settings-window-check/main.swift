@@ -105,7 +105,7 @@ func runChecks() throws {
                 "Thumb Wheel Left, Thumb Wheel Right, Side Button",
                 "all three controls are offered")
     expectEqual(viewModel.choices(for: .thumbWheelLeft).count, Action.selectable.count, "every action is offered")
-    expect(viewModel.choices(for: .thumbWheelLeft).contains(.gvoicePTT), "GVoice is one of them")
+    expect(viewModel.choices(for: .thumbWheelLeft).contains(.handyPTT), "Handy is one of them")
     expect(viewModel.choices(for: .sideButton).contains(Action(rawValue: "wisprPTT")),
            "an action name from an older build stays on the list instead of vanishing")
 
@@ -131,11 +131,11 @@ func runChecks() throws {
     restartedViewModel.resetToDefaults()
     expectEqual(restartedViewModel.actionsByTrigger[.thumbWheelLeft] ?? .passThrough, .volumeUp, "wheel left is volume again")
     expectEqual(restartedViewModel.actionsByTrigger[.thumbWheelRight] ?? .passThrough, .volumeDown, "wheel right is volume again")
-    expectEqual(restartedViewModel.actionsByTrigger[.sideButton] ?? .passThrough, .gvoicePTT, "the side button is GVoice again")
+    expectEqual(restartedViewModel.actionsByTrigger[.sideButton] ?? .passThrough, .handyPTT, "the side button is Handy again")
 
     let afterReset = SettingsStore(fileURL: settingsFile)
     expect(afterReset.load(), "the file loads after the reset")
-    expectEqual(afterReset.action(for: .sideButton, deviceID: "mx-master-3"), .gvoicePTT, "the reset was written too")
+    expectEqual(afterReset.action(for: .sideButton, deviceID: "mx-master-3"), .handyPTT, "the reset was written too")
 
     print("The thumb wheel rows")
     expect(restartedViewModel.showsWheelOptions, "a mouse gets the wheel rows")

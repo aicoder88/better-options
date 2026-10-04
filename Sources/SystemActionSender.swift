@@ -1,7 +1,7 @@
 import Foundation
 
-/// Fires the actions a trigger can be bound to, other than GVoice PTT (that one
-/// goes through `GVoiceIntegration` instead, since it holds a recording open
+/// Fires the actions a trigger can be bound to, other than Handy push-to-talk (that one
+/// goes through `HandyIntegration` instead, since it holds a recording open
 /// rather than firing once).
 ///
 /// Volume Up and Volume Down reuse `MediaKeySender`'s existing handling
@@ -53,8 +53,8 @@ final class SystemActionSender {
             mediaKeySender.sendMediaKey(KeyCode.previous)
         case .nextTrack:
             mediaKeySender.sendMediaKey(KeyCode.next)
-        case .gvoicePTT:
-            // Held, not fired — GVoiceIntegration.dispatchPTTEvent handles it.
+        case .handyPTT:
+            // Held, not fired: HandyIntegration.dispatchPTTEvent handles it.
             break
         default:
             // A future action name this build does not know yet: do nothing

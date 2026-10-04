@@ -1,5 +1,6 @@
 import Foundation
 import IOKit.hid
+import os
 
 final class HIDDeviceMonitor {
     typealias Callback = () -> Void
@@ -14,7 +15,22 @@ final class HIDDeviceMonitor {
         UsageKey(page: UInt32(kHIDPage_Consumer), usage: UInt32(kHIDUsage_Csmr_ACPanLeft)),
         UsageKey(page: UInt32(kHIDPage_Consumer), usage: UInt32(kHIDUsage_Csmr_ACPanRight)),
     ]
-    private let pttCandidateButtonUsages = Set(UInt32(6)...UInt32(16))
+    /// Button numbers that count as "the side button".
+    ///
+    /// 4 is the thumb BACK button, and leaving it out is why holding it never
+    /// started dictation while the wheel worked fine: the Mac turns HID button
+    /// 4 into its own "back" (CGEvent button 3), which is exactly what
+    /// EventTapController already swallows; the two halves disagreed. 5 is
+    /// forward and stays out, so it keeps its own meaning. 6-16 are the extra
+    /// buttons this mouse family reports.
+    private let pttCandidateButtonUsages: Set<UInt32> = Set([UInt32(4)]).union(Set(UInt32(6)...UInt32(16)))
+    /// Some mice report the thumb back button on the consumer page as AC Back
+    /// rather than as a plain button number. Same button, same job.
+    private let pttConsumerUsages: Set<UInt32> = [UInt32(kHIDUsage_Csmr_ACBack)]
+    /// Every button this mouse sends is written to the system log, so a button
+    /// that reports a number nobody expected can be read off instead of
+    /// guessed at.
+    private static let log = Logger(subsystem: "com.purr.betteroptions", category: "hid")
     /// The function-row keys worth reporting. Anything else the keyboard sends
     /// is left alone rather than routed through the remap.
     private let keyboardConsumerUsages = Set(ConsumerKey.selectable)
@@ -215,10 +231,18 @@ final class HIDDeviceMonitor {
                 consumerKeyUsage = usage.usage
 
             case .mouse:
+                if usage.page == UInt32(kHIDPage_Button)
+                    || (usage.page == UInt32(kHIDPage_Consumer) && !thumbWheelUsages.contains(usage)) {
+                    Self.log.info(
+                        "mouse input page \(usage.page, privacy: .public) usage \(usage.usage, privacy: .public) value \(integerValue, privacy: .public)"
+                    )
+                }
+
                 if thumbWheelUsages.contains(usage), integerValue != 0 {
                     lastThumbWheelEventAt = now
                     thumbWheelDelta = integerValue
-                } else if usage.page == UInt32(kHIDPage_Button), pttCandidateButtonUsages.contains(usage.usage) {
+                } else if (usage.page == UInt32(kHIDPage_Button) && pttCandidateButtonUsages.contains(usage.usage))
+                    || (usage.page == UInt32(kHIDPage_Consumer) && pttConsumerUsages.contains(usage.usage)) {
                     lastObservedPTTUsage = usage.usage
                     if integerValue == 0 {
                         lastPTTUpAt = now

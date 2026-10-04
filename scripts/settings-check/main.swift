@@ -147,7 +147,8 @@ do {
     expectEqual(Action.nextTrack.rawValue, "mediaNext", "Next Track")
 
     expect(Action(rawValue: "wisprPTT").isPushToTalk, "the old dictation name still starts dictation")
-    expect(Action.gvoicePTT.isPushToTalk, "and so does the current one")
+    expect(Action(rawValue: "gvoicePTT").isPushToTalk, "and so does the GVoice name")
+    expect(Action.handyPTT.isPushToTalk, "and so does the current one")
     expect(!Action.volumeUp.isPushToTalk, "turning the volume up does not")
     expect(!Action(rawValue: "somethingNewer").isPushToTalk, "nor does a name from a future build")
 
@@ -194,7 +195,7 @@ do {
     expect(!store.load(), "reports there was nothing to load")
     expect(!FileManager.default.fileExists(atPath: missing.path), "writes nothing on its own")
     expectEqual(store.action(for: .thumbWheelLeft, deviceID: "mx-master-3"), .volumeUp, "falls back to wheel left = volume up")
-    expectEqual(store.action(for: .sideButton, deviceID: "mx-master-3"), .gvoicePTT, "falls back to side button = GVoice")
+    expectEqual(store.action(for: .sideButton, deviceID: "mx-master-3"), .handyPTT, "falls back to side button = Handy")
 }
 
 // A name this build has never heard of has to be left alone rather than
@@ -203,7 +204,7 @@ print("An action name this build does not know")
 do {
     expect(!Action.passThrough.isSupported, "Pass Through is left alone")
     expect(Action.volumeUp.isSupported, "Volume Up is carried out")
-    expect(Action.gvoicePTT.isSupported, "GVoice dictation is carried out")
+    expect(Action.handyPTT.isSupported, "Handy dictation is carried out")
     expect(Action(rawValue: "wisprPTT").isSupported, "the old dictation name is carried out")
     expect(!Action(rawValue: "somethingNewer").isSupported, "a name from a future build is left alone")
 
@@ -280,7 +281,7 @@ do {
 
     store.resetToDefaults(deviceID: "mx-master-3")
 
-    expectEqual(store.action(for: .sideButton, deviceID: "mx-master-3"), .gvoicePTT, "the reset mouse gets dictation back")
+    expectEqual(store.action(for: .sideButton, deviceID: "mx-master-3"), .handyPTT, "the reset mouse gets dictation back")
     expectEqual(store.action(for: .thumbWheelLeft, deviceID: "mx-master-3"), .volumeUp, "and its wheel back on volume")
     expectEqual(store.action(for: .sideButton, deviceID: "mx-anywhere-3"), .toggleMute, "the other mouse is untouched")
     expectEqual(store.action(for: .consumerKey(0xB5), deviceID: "mx-keys-s"), .nextTrack, "the keyboard is untouched")
@@ -357,7 +358,7 @@ do {
     store.setAction(.toggleMute, for: .sideButton, deviceID: "mx-master-3")
 
     expectEqual(reported, 1, "the failed write is reported once")
-    expectEqual(store.action(for: .sideButton, deviceID: "mx-master-3"), .gvoicePTT, "and the change is undone rather than left only in memory")
+    expectEqual(store.action(for: .sideButton, deviceID: "mx-master-3"), .handyPTT, "and the change is undone rather than left only in memory")
     expect(!FileManager.default.fileExists(atPath: unwritable.path), "nothing was written")
 }
 

@@ -20,7 +20,7 @@ final class EventTapController {
     /// Asked before swallowing a side-button press: true means "something is
     /// bound to it and ready to run, take the event instead of letting it
     /// through as a browser-back click." The caller decides what "ready"
-    /// means per action (GVoice only says yes while it's actually running).
+    /// means per action (Handy only says yes while it's actually running).
     var shouldHandleSideButton: (() -> Bool)?
 
     /// Asked before swallowing a function-row key on the keyboard: true means
