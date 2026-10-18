@@ -43,9 +43,14 @@ final class WheelCoalescer {
     /// the direction changes, so half a flick one way never adds to a flick the
     /// other way.
     private var carried = 0
+    private var carriedDirection: Direction?
+    private var carriedDeviceID: String?
 
     /// One tick off the wheel.
     func add(direction: Direction, deviceID: String) {
+        if ticks == 0, carriedDirection != direction || carriedDeviceID != deviceID {
+            carried = 0
+        }
         if let waiting = self.direction, waiting != direction || self.deviceID != deviceID {
             flush()
             carried = 0
@@ -71,6 +76,8 @@ final class WheelCoalescer {
         let total = carried + ticks
         let steps = total / ticksPerStep
         carried = total % ticksPerStep
+        carriedDirection = direction
+        carriedDeviceID = deviceID
 
         self.direction = nil
         self.deviceID = nil
@@ -89,5 +96,7 @@ final class WheelCoalescer {
         deviceID = nil
         ticks = 0
         carried = 0
+        carriedDirection = nil
+        carriedDeviceID = nil
     }
 }
