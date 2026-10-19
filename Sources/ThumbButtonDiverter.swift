@@ -71,14 +71,20 @@ final class ThumbButtonDiverter {
         }
     }
 
-    /// Sends the diversion to every mouse again. One mid-hold is left alone, in
-    /// case the mouse answers by reporting the button up.
+    /// Asks every mouse whether it still hands the button over, and takes it
+    /// back from any that dropped it. A mouse whose first request went
+    /// unanswered (common right after a Bluetooth reconnect) is asked again for
+    /// the remap feature, or it would never be taken over.
     func resend() {
         guard isWanted else {
             return
         }
-        for device in devices.values where !device.isPressed {
-            sendReporting(device)
+        for device in devices.values {
+            if device.featureIndex == nil {
+                askForFeatureIndex(device)
+            } else {
+                askReporting(device)
+            }
         }
     }
 
@@ -129,6 +135,13 @@ final class ThumbButtonDiverter {
 
     private func askForFeatureIndex(_ state: MouseState) {
         send(state, feature: 0x00, function: 0, params: Self.reprogControlsFeature)
+    }
+
+    private func askReporting(_ state: MouseState) {
+        guard let index = state.featureIndex else {
+            return
+        }
+        send(state, feature: index, function: 2, params: Self.gestureButton)
     }
 
     private func sendReporting(_ state: MouseState) {
@@ -182,7 +195,24 @@ final class ThumbButtonDiverter {
         // The root feature's answer: where the remap feature lives.
         if report[2] == 0x00, report[3] == Self.softwareID {
             state.featureIndex = report[4] == 0 ? nil : report[4]
-            Self.log.info("thumb button feature index \(report[4], privacy: .public)")
+            Self.log.notice("thumb button feature index \(report[4], privacy: .public)")
+            sendReporting(state)
+            return
+        }
+
+        // The answer to askReporting: bit 0 of the flags is set while the
+        // button is still handed over. A mouse that dropped it mid-hold never
+        // reports the release, so end the hold here before taking it back.
+        if let index = state.featureIndex, report[2] == index, report[3] == (2 << 4) | Self.softwareID,
+           report[4] == Self.gestureButton[0], report[5] == Self.gestureButton[1] {
+            guard isWanted, report[6] & 0x01 == 0 else {
+                return
+            }
+            Self.log.notice("mouse dropped the thumb button; taking it back")
+            if state.isPressed {
+                state.isPressed = false
+                onPress?(false, state.deviceID)
+            }
             sendReporting(state)
             return
         }
