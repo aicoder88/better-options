@@ -342,8 +342,10 @@ final class AppCoordinator: NSObject {
             return
         }
 
+        // A second Cmd+Tab goes straight back, so a flick switches apps once.
+        let steps = action == .previousApp ? 1 : batch.steps
         var volume: Float?
-        for _ in 0..<batch.steps {
+        for _ in 0..<steps {
             volume = systemActionSender.perform(action) ?? volume
         }
 
