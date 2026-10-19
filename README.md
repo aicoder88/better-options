@@ -72,5 +72,6 @@ Then go to **System Settings → Privacy & Security** and re-enable both **Acces
 
 - Remapping only activates when a matching MX Master 3 device is connected.
 - Holding the thumb button starts Handy recording; letting go stops it. The mouse normally types Cmd+Tab on that button with no release, so Better Options takes it over through Logitech's HID++ channel (`Sources/ThumbButtonDiverter.swift`) while it is bound, and hands it back when unbound, when Handy is closed, or on quit. Any hold-to-talk button Better Options sends Handy the same signal as `handy --toggle-transcription` (SIGUSR2) on press and again on release. No keys are faked, so Handy's own keyboard shortcut (Option+Space) keeps working on its own.
-- Better Options swallows the raw Back button so holding it doesn't also fire browser-back while you dictate.
-- If Handy is not running, the Back button falls through to normal behavior and the menu says "Handy: not running".
+- Better Options swallows the raw Back button while it is bound, so switching apps doesn't also fire browser-back. Bound to dictation instead, it only swallows the click while Handy is running.
+- Only the button that started a recording stops it, so two buttons bound to dictation can't cut each other off.
+- The mouse forgets the thumb button takeover when it sleeps, so Better Options sends it again every 30 seconds and when the Mac wakes.

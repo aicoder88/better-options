@@ -323,7 +323,7 @@ struct Settings: Hashable, Codable {
         [
             TriggerBinding(deviceID: deviceID, trigger: .thumbWheelLeft, action: .volumeUp),
             TriggerBinding(deviceID: deviceID, trigger: .thumbWheelRight, action: .volumeDown),
-            TriggerBinding(deviceID: deviceID, trigger: .sideButton, action: .handyPTT),
+            TriggerBinding(deviceID: deviceID, trigger: .sideButton, action: .previousApp),
             TriggerBinding(deviceID: deviceID, trigger: .thumbButton, action: .handyPTT),
         ]
     }
@@ -495,9 +495,10 @@ final class SettingsStore {
     /// Puts one device's controls back to what a fresh install would do, and
     /// leaves every other device's bindings exactly where they were.
     ///
-    /// A mouse gets the wheel back on volume and the side button back on
-    /// dictation. A keyboard gets Pass Through: a key nobody has bound is
-    /// already left alone, so its bindings are simply dropped.
+    /// A mouse gets the wheel back on volume, the side button back on
+    /// switching apps and the thumb button back on dictation. A keyboard gets
+    /// Pass Through: a key nobody has bound is already left alone, so its
+    /// bindings are simply dropped.
     func resetToDefaults(deviceID: String? = nil) {
         let id = deviceID ?? defaultDeviceID
         let type = KnownDevice.all.first(where: { $0.id == id })?.type ?? .mouse

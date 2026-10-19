@@ -31,9 +31,10 @@ final class AppCoordinator: NSObject {
     private var volumePreviewItem: NSMenuItem?
     private var accessibilitySettingsItem: NSMenuItem?
     private var accessibilityPollingTimer: Timer?
-    /// Which device is holding dictation down right now, so the release goes to
-    /// the same device's binding and a hold can be let go of when that device
-    /// goes away.
+    /// Which control on which device is holding dictation down right now. Only
+    /// that control's release ends the hold, and the hold is let go of when
+    /// that device goes away.
+    private var holdingTrigger: Trigger?
     private var holdingDeviceID: String?
     private var systemObservers: [NSObjectProtocol] = []
     /// A settings file that cannot be written says so once. Saying it on every
@@ -84,6 +85,7 @@ final class AppCoordinator: NSObject {
     /// the binding changed, remapping switched off, the Mac going to sleep,
     /// the app quitting.
     func releaseHeldControls() {
+        holdingTrigger = nil
         holdingDeviceID = nil
         wheelCoalescer.reset()
         handy.releaseHold()
@@ -108,6 +110,15 @@ final class AppCoordinator: NSObject {
             }
             systemObservers.append(token)
         }
+
+        // A mouse that slept along with the Mac may have dropped the thumb
+        // button; ask for it back now rather than at the next half minute.
+        let wake = center.addObserver(forName: NSWorkspace.didWakeNotification, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated {
+                self?.thumbButton.resend()
+            }
+        }
+        systemObservers.append(wake)
     }
 
     /// The device that started a hold has been unplugged: nothing is ever going
@@ -128,15 +139,11 @@ final class AppCoordinator: NSObject {
     /// The control being held has just been pointed at something else, so the
     /// release that was coming would go to the new action instead.
     private func releaseHeldControlsIfUnbound() {
-        guard handy.isHolding, let holdingDeviceID else {
+        guard handy.isHolding, let holdingTrigger, let holdingDeviceID else {
             return
         }
 
-        let stillDictation = [Trigger.sideButton, .thumbButton, .thumbWheelLeft, .thumbWheelRight].contains {
-            settingsStore.action(for: $0, deviceID: holdingDeviceID).isPushToTalk
-        }
-
-        if !stillDictation {
+        if !settingsStore.action(for: holdingTrigger, deviceID: holdingDeviceID).isPushToTalk {
             releaseHeldControls()
         }
     }
@@ -285,6 +292,7 @@ final class AppCoordinator: NSObject {
                 return
             }
             handy.togglePTT()
+            holdingTrigger = handy.isHolding ? trigger : nil
             holdingDeviceID = handy.isHolding ? bindingDeviceID : nil
             return
         }
@@ -377,26 +385,37 @@ final class AppCoordinator: NSObject {
     /// bound to. Handy PTT holds for exactly as long as the button is down,
     /// same as it always has; any other action fires once, on press.
     private func fireHoldTrigger(_ trigger: Trigger, pressed: Bool, deviceID: String) {
-        // A release is answered by whichever device began the hold, so a mouse
-        // swapped mid-hold can never leave the first one recording.
-        let bindingDeviceID = pressed ? deviceID : (holdingDeviceID ?? deviceID)
-        let buttonAction = settingsStore.action(for: trigger, deviceID: bindingDeviceID)
+        // Only the control that began a hold ends it, and it always does, even
+        // if Handy just quit or the control was rebound mid-hold: otherwise the
+        // recording never ends, or a second dictation button cuts it short.
+        guard pressed else {
+            if holdingTrigger == trigger {
+                holdingTrigger = nil
+                holdingDeviceID = nil
+                handy.releaseHold()
+            }
+            return
+        }
+
+        let buttonAction = settingsStore.action(for: trigger, deviceID: deviceID)
 
         guard buttonAction.isPushToTalk else {
-            if pressed, let volume = systemActionSender.perform(buttonAction) {
+            if let volume = systemActionSender.perform(buttonAction) {
                 volumeHUDController.show(volume: volume)
             }
             return
         }
 
-        // A release always goes through, even if Handy just quit or the
-        // remap was turned off mid-hold: otherwise the recording never ends.
-        guard handy.isReady || !pressed else {
+        // A hold already running belongs to whichever control started it.
+        guard handy.isReady, !handy.isHolding else {
             return
         }
 
-        holdingDeviceID = pressed ? bindingDeviceID : nil
-        handy.dispatchPTTEvent(pressed: pressed)
+        handy.dispatchPTTEvent(pressed: true)
+        if handy.isHolding {
+            holdingTrigger = trigger
+            holdingDeviceID = deviceID
+        }
     }
 
     /// The menu bar icon: a keyboard with a mouse beside it, overlapping.

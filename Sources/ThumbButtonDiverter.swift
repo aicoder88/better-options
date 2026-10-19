@@ -13,7 +13,8 @@ import os
 /// diverted while something is bound to it, and handed back otherwise.
 ///
 /// The mouse forgets the diversion whenever it reconnects or wakes from a deep
-/// sleep, so it is sent again on every connect and after any quiet spell.
+/// sleep, and says nothing when it does, so it is sent again on every connect
+/// and every half minute while wanted.
 @MainActor
 final class ThumbButtonDiverter {
     typealias PressCallback = (_ isPressed: Bool, _ deviceID: String) -> Void
@@ -43,12 +44,13 @@ final class ThumbButtonDiverter {
     private static let deviceIndex: UInt8 = 0xFF
     /// Our replies are told apart from the mouse's own notifications by this.
     private static let softwareID: UInt8 = 0x0A
-    /// A mouse that has said nothing for this long may have slept and dropped
-    /// the diversion.
-    private static let quietSpell: TimeInterval = 30
+    /// How often the diversion is sent again, in case the mouse slept and
+    /// dropped it. At worst the button types Cmd+Tab for this long after a wake.
+    private static let resendInterval: TimeInterval = 30
 
     private let manager = IOHIDManagerCreate(kCFAllocatorDefault, IOOptionBits(kIOHIDOptionsTypeNone))
     private var devices: [OpaquePointer: MouseState] = [:]
+    private var resendTimer: Timer?
 
     func start() {
         IOHIDManagerSetDeviceMatching(manager, [
@@ -61,6 +63,23 @@ final class ThumbButtonDiverter {
         IOHIDManagerRegisterDeviceRemovalCallback(manager, Self.handleRemoved, context)
         IOHIDManagerScheduleWithRunLoop(manager, CFRunLoopGetMain(), CFRunLoopMode.commonModes!.rawValue)
         IOHIDManagerOpen(manager, IOOptionBits(kIOHIDOptionsTypeNone))
+
+        resendTimer = Timer.scheduledTimer(withTimeInterval: Self.resendInterval, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated {
+                self?.resend()
+            }
+        }
+    }
+
+    /// Sends the diversion to every mouse again. One mid-hold is left alone, in
+    /// case the mouse answers by reporting the button up.
+    func resend() {
+        guard isWanted else {
+            return
+        }
+        for device in devices.values where !device.isPressed {
+            sendReporting(device)
+        }
     }
 
     /// Hands the button back to the mouse, so it types Cmd+Tab again.
@@ -97,6 +116,11 @@ final class ThumbButtonDiverter {
         guard let state = devices.removeValue(forKey: Self.key(device)) else {
             return
         }
+        // The report buffer goes away with the state, so nothing may write
+        // into it after this.
+        IOHIDDeviceRegisterInputReportCallback(device, state.buffer, state.bufferSize, nil, nil)
+        IOHIDDeviceUnscheduleFromRunLoop(device, CFRunLoopGetMain(), CFRunLoopMode.commonModes!.rawValue)
+        IOHIDDeviceClose(device, IOOptionBits(kIOHIDOptionsTypeNone))
         // Nothing will ever say this button came up.
         if state.isPressed {
             onPress?(false, state.deviceID)
@@ -144,14 +168,14 @@ final class ThumbButtonDiverter {
             return
         }
 
-        let now = Date()
-        let wasQuiet = now.timeIntervalSince(state.lastHeardAt) > Self.quietSpell
-        state.lastHeardAt = now
-
         guard report.count >= 8, report[0] == Self.longReportID else {
-            if wasQuiet, isWanted {
-                sendReporting(state)
-            }
+            return
+        }
+
+        // The mouse refused one of our requests, say because the button cannot
+        // be diverted on this firmware or another app holds it.
+        if report[2] == 0xFF, report[4] & 0x0F == Self.softwareID {
+            Self.log.error("thumb button request refused: feature \(report[3], privacy: .public) error \(report[5], privacy: .public)")
             return
         }
 
@@ -221,7 +245,6 @@ private final class MouseState {
     let buffer: UnsafeMutablePointer<UInt8>
     var featureIndex: UInt8?
     var isPressed = false
-    var lastHeardAt = Date()
 
     init(device: IOHIDDevice, deviceID: String) {
         self.device = device

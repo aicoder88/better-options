@@ -195,7 +195,8 @@ do {
     expect(!store.load(), "reports there was nothing to load")
     expect(!FileManager.default.fileExists(atPath: missing.path), "writes nothing on its own")
     expectEqual(store.action(for: .thumbWheelLeft, deviceID: "mx-master-3"), .volumeUp, "falls back to wheel left = volume up")
-    expectEqual(store.action(for: .sideButton, deviceID: "mx-master-3"), .handyPTT, "falls back to side button = Handy")
+    expectEqual(store.action(for: .sideButton, deviceID: "mx-master-3"), .previousApp, "falls back to side button = Switch to Last App")
+    expectEqual(store.action(for: .thumbButton, deviceID: "mx-master-3"), .handyPTT, "and thumb button = Handy")
 }
 
 // A name this build has never heard of has to be left alone rather than
@@ -281,7 +282,8 @@ do {
 
     store.resetToDefaults(deviceID: "mx-master-3")
 
-    expectEqual(store.action(for: .sideButton, deviceID: "mx-master-3"), .handyPTT, "the reset mouse gets dictation back")
+    expectEqual(store.action(for: .sideButton, deviceID: "mx-master-3"), .previousApp, "the reset mouse gets app switching back")
+    expectEqual(store.action(for: .thumbButton, deviceID: "mx-master-3"), .handyPTT, "and dictation back on the thumb button")
     expectEqual(store.action(for: .thumbWheelLeft, deviceID: "mx-master-3"), .volumeUp, "and its wheel back on volume")
     expectEqual(store.action(for: .sideButton, deviceID: "mx-anywhere-3"), .toggleMute, "the other mouse is untouched")
     expectEqual(store.action(for: .consumerKey(0xB5), deviceID: "mx-keys-s"), .nextTrack, "the keyboard is untouched")
@@ -358,7 +360,7 @@ do {
     store.setAction(.toggleMute, for: .sideButton, deviceID: "mx-master-3")
 
     expectEqual(reported, 1, "the failed write is reported once")
-    expectEqual(store.action(for: .sideButton, deviceID: "mx-master-3"), .handyPTT, "and the change is undone rather than left only in memory")
+    expectEqual(store.action(for: .sideButton, deviceID: "mx-master-3"), .previousApp, "and the change is undone rather than left only in memory")
     expect(!FileManager.default.fileExists(atPath: unwritable.path), "nothing was written")
 }
 
