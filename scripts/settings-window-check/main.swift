@@ -131,11 +131,13 @@ func runChecks() throws {
     restartedViewModel.resetToDefaults()
     expectEqual(restartedViewModel.actionsByTrigger[.thumbWheelLeft] ?? .passThrough, .volumeUp, "wheel left is volume again")
     expectEqual(restartedViewModel.actionsByTrigger[.thumbWheelRight] ?? .passThrough, .volumeDown, "wheel right is volume again")
-    expectEqual(restartedViewModel.actionsByTrigger[.sideButton] ?? .passThrough, .handyPTT, "the side button is Handy again")
+    expectEqual(restartedViewModel.actionsByTrigger[.sideButton] ?? .passThrough, .previousApp, "the side button switches apps again")
+    expectEqual(restartedViewModel.actionsByTrigger[.thumbButton] ?? .passThrough, .handyPTT, "the thumb button is Handy again")
 
     let afterReset = SettingsStore(fileURL: settingsFile)
     expect(afterReset.load(), "the file loads after the reset")
-    expectEqual(afterReset.action(for: .sideButton, deviceID: "mx-master-3"), .handyPTT, "the reset was written too")
+    expectEqual(afterReset.action(for: .sideButton, deviceID: "mx-master-3"), .previousApp, "the reset was written too")
+    expectEqual(afterReset.action(for: .thumbButton, deviceID: "mx-master-3"), .handyPTT, "and so was the thumb button")
 
     print("The thumb wheel rows")
     expect(restartedViewModel.showsWheelOptions, "a mouse gets the wheel rows")

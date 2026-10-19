@@ -143,7 +143,7 @@ final class SettingsViewModel: ObservableObject {
     }
 
     /// Puts every control back to what a fresh install would do: the wheel on
-    /// volume, the side button on Handy.
+    /// volume, the side button on switching apps, the thumb button on Handy.
     func resetToDefaults() {
         store.resetToDefaults(deviceID: selectedDeviceID)
         refresh()
