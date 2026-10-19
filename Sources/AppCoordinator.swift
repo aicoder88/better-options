@@ -10,6 +10,7 @@ final class AppCoordinator: NSObject {
     private let deviceMonitor = HIDDeviceMonitor()
     private let deviceRegistry = DeviceRegistry()
     private let handy = HandyIntegration()
+    private let thumbButton = ThumbButtonDiverter()
     private let mediaKeySender = MediaKeySender()
     private let settingsStore = SettingsStore()
     private let volumeHUDController = VolumeHUDController()
@@ -69,6 +70,7 @@ final class AppCoordinator: NSObject {
 
         handy.refreshConfiguration()
         deviceMonitor.start()
+        thumbButton.start()
         requestAccessibilityPermissionsIfNeeded()
         eventTapController.start()
 
@@ -130,7 +132,7 @@ final class AppCoordinator: NSObject {
             return
         }
 
-        let stillDictation = [Trigger.sideButton, .thumbWheelLeft, .thumbWheelRight].contains {
+        let stillDictation = [Trigger.sideButton, .thumbButton, .thumbWheelLeft, .thumbWheelRight].contains {
             settingsStore.action(for: $0, deviceID: holdingDeviceID).isPushToTalk
         }
 
@@ -188,7 +190,17 @@ final class AppCoordinator: NSObject {
                 return
             }
 
-            self.fireSideButton(pressed: pressed, deviceID: deviceID)
+            self.fireHoldTrigger(.sideButton, pressed: pressed, deviceID: deviceID)
+        }
+
+        thumbButton.onPress = { [weak self] pressed, deviceID in
+            // A release always goes through, so switching the remap off
+            // mid-hold cannot leave Handy recording.
+            guard let self, self.remappingEnabled || !pressed else {
+                return
+            }
+
+            self.fireHoldTrigger(.thumbButton, pressed: pressed, deviceID: deviceID)
         }
 
         deviceMonitor.onConsumerKeyEvent = { [weak self] usage, pressed, deviceID in
@@ -361,17 +373,17 @@ final class AppCoordinator: NSObject {
         alert.runModal()
     }
 
-    /// Fires whatever the side button is bound to. Handy PTT holds for
-    /// exactly as long as the button is down, same as it always has; any
-    /// other action fires once, on press.
-    private func fireSideButton(pressed: Bool, deviceID: String) {
+    /// Fires whatever a held button (the side button or the thumb button) is
+    /// bound to. Handy PTT holds for exactly as long as the button is down,
+    /// same as it always has; any other action fires once, on press.
+    private func fireHoldTrigger(_ trigger: Trigger, pressed: Bool, deviceID: String) {
         // A release is answered by whichever device began the hold, so a mouse
         // swapped mid-hold can never leave the first one recording.
         let bindingDeviceID = pressed ? deviceID : (holdingDeviceID ?? deviceID)
-        let sideButtonAction = settingsStore.action(for: .sideButton, deviceID: bindingDeviceID)
+        let buttonAction = settingsStore.action(for: trigger, deviceID: bindingDeviceID)
 
-        guard sideButtonAction.isPushToTalk else {
-            if pressed, let volume = systemActionSender.perform(sideButtonAction) {
+        guard buttonAction.isPushToTalk else {
+            if pressed, let volume = systemActionSender.perform(buttonAction) {
                 volumeHUDController.show(volume: volume)
             }
             return
@@ -494,7 +506,24 @@ final class AppCoordinator: NSObject {
         item.menu = menu
     }
 
+    /// The thumb button is only taken off the mouse while it has a job here;
+    /// otherwise it keeps typing Cmd+Tab as it was built to. Dictation counts
+    /// as a job only while Handy is open, the same rule the side button uses.
+    private func syncThumbButton() {
+        let action = self.action(for: .thumbButton)
+        thumbButton.isWanted = remappingEnabled
+            && action.isSupported
+            && (!action.isPushToTalk || handy.isReady)
+    }
+
+    /// Gives the thumb button back to the mouse before the app goes away, or it
+    /// would do nothing at all until the mouse reconnects.
+    func handBackThumbButton() {
+        thumbButton.stop()
+    }
+
     private func updateMenu() {
+        syncThumbButton()
         let accessibilityGranted = eventTapController.hasAccessibilityPermission
         let inputMonitoringGranted = deviceMonitor.hasInputMonitoring
         let tapReady = eventTapController.isTapInstalled

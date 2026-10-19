@@ -102,8 +102,8 @@ func runChecks() throws {
     expectEqual(viewModel.devices.count, 2, "the mouse and the keyboard are both listed")
     expectEqual(viewModel.devices.first?.isConnected ?? false, true, "shown as connected")
     expectEqual(Trigger.selectable.map(\.displayName).joined(separator: ", "),
-                "Thumb Wheel Left, Thumb Wheel Right, Side Button",
-                "all three controls are offered")
+                "Thumb Wheel Left, Thumb Wheel Right, Side Button, Thumb Button",
+                "all four controls are offered")
     expectEqual(viewModel.choices(for: .thumbWheelLeft).count, Action.selectable.count, "every action is offered")
     expect(viewModel.choices(for: .thumbWheelLeft).contains(.handyPTT), "Handy is one of them")
     expect(viewModel.choices(for: .sideButton).contains(Action(rawValue: "wisprPTT")),

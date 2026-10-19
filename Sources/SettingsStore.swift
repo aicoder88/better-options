@@ -44,6 +44,9 @@ struct Trigger: RawRepresentable, Hashable, Codable {
     static let thumbWheelLeft = Trigger(rawValue: "thumbWheelLeft")
     static let thumbWheelRight = Trigger(rawValue: "thumbWheelRight")
     static let sideButton = Trigger(rawValue: "sideButton")
+    /// The gesture button under the thumb. It only reports holds while
+    /// `ThumbButtonDiverter` has taken it over.
+    static let thumbButton = Trigger(rawValue: "thumbButton")
 
     /// One key on the keyboard's function row, named by its HID usage number.
     static func consumerKey(_ usage: UInt32) -> Trigger {
@@ -53,13 +56,14 @@ struct Trigger: RawRepresentable, Hashable, Codable {
     /// The mouse controls the settings window offers, in the order it shows
     /// them. Keyboard keys come from `ConsumerKey.selectable` instead, because
     /// they vary by keyboard.
-    static let selectable: [Trigger] = [.thumbWheelLeft, .thumbWheelRight, .sideButton]
+    static let selectable: [Trigger] = [.thumbWheelLeft, .thumbWheelRight, .sideButton, .thumbButton]
 
     var displayName: String {
         switch rawValue {
         case "thumbWheelLeft": return "Thumb Wheel Left"
         case "thumbWheelRight": return "Thumb Wheel Right"
         case "sideButton": return "Side Button"
+        case "thumbButton": return "Thumb Button"
         case "consumerKey": return usage.map(ConsumerKey.displayName(for:)) ?? "Keyboard Key"
         default: return rawValue
         }
@@ -317,6 +321,7 @@ struct Settings: Hashable, Codable {
             TriggerBinding(deviceID: deviceID, trigger: .thumbWheelLeft, action: .volumeUp),
             TriggerBinding(deviceID: deviceID, trigger: .thumbWheelRight, action: .volumeDown),
             TriggerBinding(deviceID: deviceID, trigger: .sideButton, action: .handyPTT),
+            TriggerBinding(deviceID: deviceID, trigger: .thumbButton, action: .handyPTT),
         ]
     }
 

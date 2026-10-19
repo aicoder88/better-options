@@ -12,5 +12,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// left on this Mac able to stop it.
     func applicationWillTerminate(_ notification: Notification) {
         coordinator?.releaseHeldControls()
+        coordinator?.handBackThumbButton()
     }
 }
