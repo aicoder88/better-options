@@ -190,6 +190,7 @@ struct Action: RawRepresentable, Hashable, Codable {
     static let previousTrack = Action(rawValue: "mediaPrevious")
     static let nextTrack = Action(rawValue: "mediaNext")
     static let handyPTT = Action(rawValue: "handyPTT")
+    static let previousApp = Action(rawValue: "previousApp")
 
     /// The choices the settings window offers, in the order it shows them.
     static let selectable: [Action] = [
@@ -203,6 +204,7 @@ struct Action: RawRepresentable, Hashable, Codable {
         .previousTrack,
         .nextTrack,
         .handyPTT,
+        .previousApp,
     ]
 
     /// Whether this means hold-to-talk dictation.
@@ -240,6 +242,7 @@ struct Action: RawRepresentable, Hashable, Codable {
         case .previousTrack: return "Previous Track"
         case .nextTrack: return "Next Track"
         case .handyPTT: return "Handy Push-to-Talk"
+        case .previousApp: return "Switch to Last App"
         default: return rawValue
         }
     }

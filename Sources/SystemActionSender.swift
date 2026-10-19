@@ -1,3 +1,4 @@
+import CoreGraphics
 import Foundation
 
 /// Fires the actions a trigger can be bound to, other than Handy push-to-talk (that one
@@ -53,6 +54,8 @@ final class SystemActionSender {
             mediaKeySender.sendMediaKey(KeyCode.previous)
         case .nextTrack:
             mediaKeySender.sendMediaKey(KeyCode.next)
+        case .previousApp:
+            sendCommandTab()
         case .handyPTT:
             // Held, not fired: HandyIntegration.dispatchPTTEvent handles it.
             break
@@ -62,5 +65,24 @@ final class SystemActionSender {
             break
         }
         return nil
+    }
+
+    /// One quick Cmd+Tab, which is how the Mac goes back to the app used last.
+    /// It is what the mouse's own thumb button typed before it was taken over.
+    private func sendCommandTab() {
+        let source = CGEventSource(stateID: .hidSystemState)
+        let command: CGKeyCode = 0x37
+        let tab: CGKeyCode = 0x30
+        let events = [
+            CGEvent(keyboardEventSource: source, virtualKey: command, keyDown: true),
+            CGEvent(keyboardEventSource: source, virtualKey: tab, keyDown: true),
+            CGEvent(keyboardEventSource: source, virtualKey: tab, keyDown: false),
+            CGEvent(keyboardEventSource: source, virtualKey: command, keyDown: false),
+        ]
+        for (index, event) in events.enumerated() {
+            // Command is held for the Tab in between, and let go at the end.
+            event?.flags = index < 3 ? .maskCommand : []
+            event?.post(tap: .cghidEventTap)
+        }
     }
 }
