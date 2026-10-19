@@ -31,3 +31,14 @@ connector and its check were deleted. Saved bindings named `gvoicePTT` or
 
 Reverse if: Handy drops the signal, or a missed release leaves it recording
 often. Then bind the button to Handy's keyboard shortcut instead.
+
+## 2026-10-19: Thumb button dictates, back button switches apps
+
+The thumb (gesture) button now drives Handy hold-to-talk, taken over through
+HID++ (feature 0x1B04, control 0xC3) so it reports press and release. The back
+button now sends one Cmd+Tab. Handy's own shortcut is Option+Space, never a
+mouse button: Handy listening to the same button as Better Options made the
+two flip recording on and off against each other.
+
+Reverse if: the thumb button stops reporting holds after a mouse or macOS
+update. Then put dictation back on the back button.
