@@ -7,6 +7,8 @@ MACOS_DIR="$APP_DIR/Contents/MacOS"
 RESOURCES_DIR="$APP_DIR/Contents/Resources"
 
 cd "$ROOT_DIR"
+# A build that would leave a mouse button stuck down never gets made.
+"$ROOT_DIR/scripts/check-side-button.sh"
 swift build
 
 rm -rf "$APP_DIR"

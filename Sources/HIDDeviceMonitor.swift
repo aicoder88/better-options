@@ -39,7 +39,6 @@ final class HIDDeviceMonitor {
     private let lock = NSLock()
     private var lastThumbWheelEventAt: UInt64 = 0
     private var lastPTTDownAt: UInt64 = 0
-    private var lastPTTUpAt: UInt64 = 0
     private var lastObservedPTTUsage: UInt32?
     private var lastConsumerKeyEventAt: UInt64 = 0
     private var lastConsumerKeyUsage: UInt32?
@@ -126,8 +125,8 @@ final class HIDDeviceMonitor {
         recentEvent(lastThumbWheelEventAt, within: seconds)
     }
 
-    func sawRecentPTTButtonEvent(isPressed: Bool, within seconds: TimeInterval) -> Bool {
-        recentEvent(isPressed ? lastPTTDownAt : lastPTTUpAt, within: seconds)
+    func sawRecentPTTButtonPress(within seconds: TimeInterval) -> Bool {
+        recentEvent(lastPTTDownAt, within: seconds)
     }
 
     var lastObservedPTTButtonUsage: UInt32? {
@@ -244,9 +243,7 @@ final class HIDDeviceMonitor {
                 } else if (usage.page == UInt32(kHIDPage_Button) && pttCandidateButtonUsages.contains(usage.usage))
                     || (usage.page == UInt32(kHIDPage_Consumer) && pttConsumerUsages.contains(usage.usage)) {
                     lastObservedPTTUsage = usage.usage
-                    if integerValue == 0 {
-                        lastPTTUpAt = now
-                    } else {
+                    if integerValue != 0 {
                         lastPTTDownAt = now
                     }
                     shouldDispatchPTT = true

@@ -10,7 +10,7 @@ final class EventTapController {
 
     private var eventTap: CFMachPort?
     private var runLoopSource: CFRunLoopSource?
-    /// Whether the side button's press was taken rather than passed on. Its
+    /// Whether each side button's press was taken rather than passed on. Its
     /// release has to go the same way, whatever has changed in between.
     private var sideButtonPairing = SideButtonPairing()
 
@@ -198,13 +198,23 @@ final class EventTapController {
         // became unavailable in between: half a click is how a stray
         // browser-back lands at the end of a sentence. A press that went
         // through has its release go through, or the button stays held.
-        let swallow = sideButtonPairing.shouldSwallow(pressed: pressed) {
+        let swallow = sideButtonPairing.shouldSwallow(
+            button: buttonNumber,
+            pressed: pressed,
+            at: ProcessInfo.processInfo.systemUptime
+        ) {
             isEnabled
                 && deviceMonitor.hasMatchedDevice
                 && (shouldHandleSideButton?() ?? false)
-                && deviceMonitor.sawRecentPTTButtonEvent(isPressed: true, within: 0.08)
+                && deviceMonitor.sawRecentPTTButtonPress(within: SideButtonPairing.window)
         }
         return swallow ? nil : Unmanaged.passRetained(event)
+    }
+
+    /// True when a side-button press just went through to the apps, so the
+    /// mouse's own report of it must not fire the button's action as well.
+    var sideButtonPressReachedApps: Bool {
+        sideButtonPairing.pressReachedApps(at: ProcessInfo.processInfo.systemUptime)
     }
 
     private static let eventTapCallback: CGEventTapCallBack = { _, type, event, userInfo in

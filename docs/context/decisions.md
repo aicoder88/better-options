@@ -42,3 +42,15 @@ two flip recording on and off against each other.
 
 Reverse if: the thumb button stops reporting holds after a mouse or macOS
 update. Then put dictation back on the back button.
+
+## 2026-10-20: A side-button press does one thing
+
+When the Mac's click beats the mouse's own report of it, the click goes to the
+apps (a browser Back) and the button's action stays quiet for that press. It
+used to do both. Each side button keeps its own press/release pairing, so one
+button held over another can no longer leave either stuck down.
+`scripts/check-side-button.sh` runs before every build.
+
+Reverse if: the back button often acts as browser Back instead of switching
+apps. Then the mouse's report is usually late, and the press needs deciding
+by button number instead of by the report's timing.

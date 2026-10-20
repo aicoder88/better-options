@@ -196,6 +196,11 @@ final class AppCoordinator: NSObject {
             guard let self, self.remappingEnabled else {
                 return
             }
+            // The click already went through to the apps (it beat the mouse's
+            // own report), so the button has done its one thing.
+            if pressed, self.eventTapController.sideButtonPressReachedApps {
+                return
+            }
 
             self.fireHoldTrigger(.sideButton, pressed: pressed, deviceID: deviceID)
         }
